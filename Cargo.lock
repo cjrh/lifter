@@ -54,7 +54,6 @@ dependencies = [
  "compression",
  "flate2",
  "fstrings",
- "ini",
  "nipper",
  "paw",
  "regex",
@@ -63,6 +62,8 @@ dependencies = [
  "select",
  "structopt",
  "tar",
+ "tini",
+ "toml",
  "zip",
 ]
 
@@ -164,12 +165,6 @@ dependencies = [
  "log",
  "num-traits",
 ]
-
-[[package]]
-name = "configparser"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe1d7dcda7d1da79e444bdfba1465f2f849a58b07774e1df473ee77030cb47a7"
 
 [[package]]
 name = "core-foundation"
@@ -580,15 +575,6 @@ checksum = "4e47a3566dd4fd4eec714ae6ceabdee0caec795be835c223d92c2d40f1e8cf1c"
 dependencies = [
  "autocfg",
  "hashbrown",
-]
-
-[[package]]
-name = "ini"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a9271a5dfd4228fa56a78d7508a35c321639cc71f783bb7a5723552add87bce"
-dependencies = [
- "configparser",
 ]
 
 [[package]]
@@ -1489,6 +1475,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tini"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11eeaa68267376df2aacbaaed9b0092544ebbc897cd59f61e81a1105fbaf102e"
+
+[[package]]
 name = "tinyvec"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1534,6 +1526,15 @@ dependencies = [
  "log",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "toml"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffc92d160b1eef40665be3a05630d003936a3bc7da7421277846c2613e92c71a"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

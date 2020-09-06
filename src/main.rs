@@ -1,12 +1,10 @@
 #[macro_use]
 extern crate fstrings;
 
-#[macro_use]
-extern crate ini;
-
 use scraper::{Html, Selector};
 use std::error::Error;
 use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
 const VERSION_EXTRACTOR: &str = r###"((?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)"###;
 const TRIPLE_EXTRACTOR: &str = r###"-((?:[a-zA-Z0-9_-]+){3,4})"###;
 
@@ -40,31 +38,56 @@ struct Args {
 
 #[paw::main]
 fn main(args: Args) -> Result<(), Box<dyn Error>> {
-    let conf = ini!("binsync.config");
+    let filename = "binsync.config";
+    let conf = tini::Ini::from_file(&filename).unwrap();
+    // let conf_write = tini::Ini::from_file(&filename).unwrap();
+    for (section, hm) in conf.iter() {
+        println!("Checking {}...", &section);
+        // Happy helper for getting a value in this section
+        let get = |s: &str| conf.get::<String>(&section, s);
+        let mut cf = Config::new();
 
-    for (section, hm) in &conf {
-        if let Some(project) = &hm["project"] {
-            let mut cf = Config::new();
-            cf.project = project.clone();
-            cf.target_platform = hm["target_platform"].clone();
-            cf.version = hm["version"].clone();
-            if let Some(Some(url_template)) = hm.get("url_template") {
-                cf.url_template = url_template.clone();
+        // First get the project - required
+        let project = match get("project") {
+            Some(p) => p,
+            None => continue,
+        };
+        println!("Found the project section: {}", &project);
+        cf.project = project.clone();
+
+        // Now the remaining values
+        cf.target_platform = get("target_platform");
+        cf.version = get("version");
+        if let Some(url_template) = get("url_template") {
+            cf.url_template = url_template.clone();
+            println!("Set url_template: {:?}", &cf.url_template);
+        }
+        println!("{:?}", &hm);
+        if let Some(pattern) = get("pattern") {
+            cf.pattern = pattern.clone();
+            println!("Set pattern: {:?}", &cf.pattern);
+        };
+        if let Some(tfn) = get("target_filename") {
+            cf.target_filename = tfn.clone();
+            println!("Set target_filename: {:?}", &cf.target_filename);
+        };
+        if !std::path::Path::new(&cf.target_filename).exists() {
+            if let Some(new_version) = process(&mut cf)? {
+                // New version, must update the version number in the
+                // config file.
+                // conf_write.section(section).item("version", &new_version);
+                // conf_write.to_file(&filename).unwrap();
+                println!("Updated config file.");
             }
-            if let Some(Some(pattern)) = hm.get("pattern") {
-                cf.pattern = pattern.clone();
-            };
-            if let Some(Some(tfn)) = hm.get("target_filename") {
-                cf.target_filename = tfn.clone();
-            };
-            process(&mut cf)?;
+        } else {
+            println!("Target {} exists, skipping.", &cf.target_filename);
         }
     }
 
-    return Ok(());
+    Ok(())
 }
 
-fn process(conf: &mut Config) -> Result<(), Box<dyn Error>> {
+fn process(conf: &mut Config) -> Result<Option<String>, Box<dyn Error>> {
     // TODO: can't use fstrings if we store the template. Instead,
     // we can use the string_template package.
     let url = f!("https://github.com/{conf.project}/releases");
@@ -74,9 +97,7 @@ fn process(conf: &mut Config) -> Result<(), Box<dyn Error>> {
     let fragment = Html::parse_document(&body);
     let stories = Selector::parse("details .Box a").unwrap();
 
-    let re = regex::Regex::new(&VERSION_EXTRACTOR)?;
-    let re_triple = regex::Regex::new(&TRIPLE_EXTRACTOR)?;
-    let re_pat = regex::Regex::new(&PATTERN)?;
+    let re_pat = regex::Regex::new(&conf.pattern)?;
 
     for story in fragment.select(&stories) {
         if let Some(href) = &story.value().attr("href") {
@@ -112,17 +133,26 @@ fn process(conf: &mut Config) -> Result<(), Box<dyn Error>> {
             // if let Some(target_platform) = caps.name("platform") {
             //     println!("Got platform! {}", &target_platform.as_str());
             // }
-            // if let Some(version) = caps.name("version") {
-            //     println!("Got version! {}", &version.as_str());
-            // }
+
+            // Version checking - must be done before we download files.
+            let new_version = match caps.name("version") {
+                Some(version) => match &conf.version {
+                    Some(v) => {
+                        if v == version.as_str() {
+                            Some(version.as_str().to_owned())
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                },
+                None => None,
+            };
+
             let download_url = format!("https://github.com{}", &href);
             println!("{}", &download_url);
 
             let mut resp = reqwest::blocking::get(&download_url).unwrap();
-            // let ext = std::path::Path::new(&href)
-            //     .extension()
-            //     .and_then(std::ffi::OsStr::to_str)
-            //     .unwrap();
             let ext = {
                 if href.ends_with(".tar.gz") {
                     ".tar.gz"
@@ -150,14 +180,12 @@ fn process(conf: &mut Config) -> Result<(), Box<dyn Error>> {
 
             let mut output = std::fs::File::create(&dlfilename)?;
             println!("Writing {} from {}...", &conf.target_filename, &href);
-            output.write_all(&mut buf);
-            // resp.copy_to(&mut output)?;
-
-            break;
+            output.write_all(&mut buf)?;
+            return Ok(new_version);
         }
     }
 
-    Ok(())
+    Ok(None)
 }
 
 fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) {
