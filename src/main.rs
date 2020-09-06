@@ -40,7 +40,6 @@ struct Args {
 fn main(args: Args) -> Result<(), Box<dyn Error>> {
     let filename = "binsync.config";
     let conf = tini::Ini::from_file(&filename).unwrap();
-    // let conf_write = tini::Ini::from_file(&filename).unwrap();
     for (section, hm) in conf.iter() {
         println!("Checking {}...", &section);
         // Happy helper for getting a value in this section
@@ -75,8 +74,18 @@ fn main(args: Args) -> Result<(), Box<dyn Error>> {
             if let Some(new_version) = process(&mut cf)? {
                 // New version, must update the version number in the
                 // config file.
-                // conf_write.section(section).item("version", &new_version);
-                // conf_write.to_file(&filename).unwrap();
+                println!(
+                    "Downloaded new version of {}: {}",
+                    &cf.target_filename, &new_version
+                );
+                // TODO: actually need a mutex around the following 3 lines.
+                let conf_write = tini::Ini::from_file(&filename).unwrap();
+
+                conf_write
+                    .section(section)
+                    .item("version", &new_version)
+                    .to_file(&filename)
+                    .unwrap();
                 println!("Updated config file.");
             }
         } else {
