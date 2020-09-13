@@ -61,7 +61,7 @@ fn main(args: Args) -> Result<(), Box<dyn Error>> {
             cf.url_template = url_template.clone();
             println!("Set url_template: {:?}", &cf.url_template);
         }
-        println!("{:?}", &hm);
+        // println!("{:?}", &hm);
         if let Some(pattern) = get("pattern") {
             cf.pattern = pattern.clone();
             println!("Set pattern: {:?}", &cf.pattern);
