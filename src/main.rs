@@ -1,12 +1,12 @@
 #[macro_use]
 extern crate fstrings;
 
+use log::*;
 use scraper::{Html, Selector};
 use std::error::Error;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
-const VERSION_EXTRACTOR: &str = r###"((?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)"###;
-const TRIPLE_EXTRACTOR: &str = r###"-((?:[a-zA-Z0-9_-]+){3,4})"###;
+use structopt::StructOpt;
 
 const PATTERN: &str = r###"(?P<binname>[a-zA-Z][a-zA-Z0-9_]+)-(?P<version>(?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)-(?P<platform>(?:[a-zA-Z0-9_]-?)+)"###;
 
@@ -31,17 +31,40 @@ impl Config {
 }
 
 #[derive(structopt::StructOpt)]
+#[structopt()]
 struct Args {
     #[structopt(short = "p", long = "project", env = "PROJECT", default_value = "blah")]
     project: String,
+    /// Silence all output
+    #[structopt(short = "q", long = "quiet")]
+    quiet: bool,
+    /// Verbose mode (-v, -vv, -vvv, etc)
+    #[structopt(short = "v", long = "verbose", parse(from_occurrences))]
+    verbose: usize,
+    /// Timestamp (sec, ms, ns, none)
+    #[structopt(short = "t", long = "timestamp")]
+    ts: Option<stderrlog::Timestamp>,
 }
 
 #[paw::main]
 fn main(args: Args) -> Result<(), Box<dyn Error>> {
+    stderrlog::new()
+        .module(module_path!())
+        .quiet(args.quiet)
+        .verbosity(args.verbose)
+        .timestamp(args.ts.unwrap_or(stderrlog::Timestamp::Off))
+        .init()
+        .unwrap();
+    trace!("trace message");
+    debug!("debug message");
+    info!("info message");
+    warn!("warn message");
+    error!("error message");
+
     let filename = "binsync.config";
     let conf = tini::Ini::from_file(&filename).unwrap();
     for (section, hm) in conf.iter() {
-        println!("Checking {}...", &section);
+        debug!("Checking {}...", &section);
         // Happy helper for getting a value in this section
         let get = |s: &str| conf.get::<String>(&section, s);
         let mut cf = Config::new();
@@ -51,7 +74,7 @@ fn main(args: Args) -> Result<(), Box<dyn Error>> {
             Some(p) => p,
             None => continue,
         };
-        println!("Found the project section: {}", &project);
+        debug!("Found the project section: {}", &project);
         cf.project = project.clone();
 
         // Now the remaining values
@@ -59,22 +82,22 @@ fn main(args: Args) -> Result<(), Box<dyn Error>> {
         cf.version = get("version");
         if let Some(url_template) = get("url_template") {
             cf.url_template = url_template.clone();
-            println!("Set url_template: {:?}", &cf.url_template);
+            debug!("Set url_template: {:?}", &cf.url_template);
         }
         // println!("{:?}", &hm);
         if let Some(pattern) = get("pattern") {
             cf.pattern = pattern.clone();
-            println!("Set pattern: {:?}", &cf.pattern);
+            debug!("Set pattern: {:?}", &cf.pattern);
         };
         if let Some(tfn) = get("target_filename") {
             cf.target_filename = tfn.clone();
-            println!("Set target_filename: {:?}", &cf.target_filename);
+            debug!("Set target_filename: {:?}", &cf.target_filename);
         };
         if !std::path::Path::new(&cf.target_filename).exists() {
             if let Some(new_version) = process(&mut cf)? {
                 // New version, must update the version number in the
                 // config file.
-                println!(
+                info!(
                     "Downloaded new version of {}: {}",
                     &cf.target_filename, &new_version
                 );
@@ -86,10 +109,10 @@ fn main(args: Args) -> Result<(), Box<dyn Error>> {
                     .item("version", &new_version)
                     .to_file(&filename)
                     .unwrap();
-                println!("Updated config file.");
+                debug!("Updated config file.");
             }
         } else {
-            println!("Target {} exists, skipping.", &cf.target_filename);
+            info!("Target {} exists, skipping.", &cf.target_filename);
         }
     }
 
@@ -122,14 +145,14 @@ fn process(conf: &mut Config) -> Result<Option<String>, Box<dyn Error>> {
                     Some(p) => {
                         // println!("Found platform in url: {}", &p.as_str());
                         if p.as_str() == tp {
-                            println!("Target platform {} detected", &p.as_str());
+                            debug!("Target platform {} detected", &p.as_str());
                         } else {
                             // println!("Platfom doesn't match");
                             continue;
                         }
                     }
                     None => {
-                        println!("No platform in the parsed URL");
+                        warn!("No platform in the parsed URL");
                         continue;
                     }
                 }
@@ -159,18 +182,21 @@ fn process(conf: &mut Config) -> Result<Option<String>, Box<dyn Error>> {
             };
 
             let download_url = format!("https://github.com{}", &href);
-            println!("{}", &download_url);
+            debug!("{}", &download_url);
 
             let mut resp = reqwest::blocking::get(&download_url).unwrap();
             let ext = {
-                if href.ends_with(".tar.gz") {
-                    ".tar.gz"
-                } else if href.ends_with(".tgz") {
+                if vec![".tar.gz", ".tgz"]
+                    .iter()
+                    .any(|ext| href.ends_with(ext))
+                {
                     ".tar.gz"
                 } else if href.ends_with(".zip") {
                     ".zip"
+                } else if href.ends_with(".exe") {
+                    ".exe"
                 } else {
-                    println!("Unknown file extension. Skipping.");
+                    info!("Unknown file extension. Skipping.");
                     break;
                 }
             };
@@ -185,10 +211,14 @@ fn process(conf: &mut Config) -> Result<Option<String>, Box<dyn Error>> {
                 extract_target_from_zipfile(&mut buf, &conf);
             } else if ext == ".tar.gz" {
                 extract_target_from_tarfile(&mut buf, &conf);
+            } else if ext == ".exe" {
             };
 
             let mut output = std::fs::File::create(&dlfilename)?;
-            println!("Writing {} from {}...", &conf.target_filename, &href);
+            info!(
+                "Writing {} from {}... output is {}",
+                &conf.target_filename, &href, &dlfilename
+            );
             output.write_all(&mut buf)?;
             return Ok(new_version);
         }
@@ -215,13 +245,13 @@ fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) {
     {
         let mut file = archive.by_name(&fname).unwrap();
         let path = std::path::Path::new(&fname);
-        println!(
+        debug!(
             "zip, got filename: {}",
             &path.file_name().unwrap().to_str().unwrap()
         );
         if let Some(p) = &path.file_name() {
             if p.to_string_lossy() == conf.target_filename {
-                println!("zip, Got a match: {}", &fname);
+                debug!("zip, Got a match: {}", &fname);
                 let mut rawfile = std::fs::File::create(&conf.target_filename).unwrap();
                 let mut buf = Vec::new();
                 file.read_to_end(&mut buf);
