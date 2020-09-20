@@ -48,6 +48,11 @@ impl Config {
     }
 }
 
+struct Hit {
+    version: String,
+    download_url: String,
+}
+
 #[derive(structopt::StructOpt)]
 #[structopt()]
 struct Args {
@@ -143,172 +148,184 @@ fn run_section(section: &str, conf: &tini::Ini, filename: &str) -> Result<()> {
     Ok(())
 }
 
+fn target_file_already_exists(conf: &Config) -> bool {
+    let filename_to_check = if let Some(fname) = conf.desired_filename.as_ref() {
+        fname
+    } else if let Some(fname) = conf.target_filename_to_extract_from_archive.as_ref() {
+        fname
+    } else {
+        panic!("This should be impossible")
+    };
+
+    std::path::Path::new(&filename_to_check).exists()
+}
+
 fn process(conf: &mut Config) -> Result<Option<String>> {
-    // TODO: can't use fstrings if we store the template. Instead,
-    // we can use the string_template package.
     let url = &conf.page_url;
-    debug!("Calling {}", &url);
-    let resp = reqwest::blocking::get(url).unwrap();
-    assert!(&resp.status().is_success());
 
+    let parse_result = parse_html_page(&conf, url)?;
+    let hit = match parse_result {
+        Some(hit) => hit,
+        None => return Ok(None),
+    };
+
+    let existing_version = conf.version.as_ref().unwrap();
+    if target_file_already_exists(&conf) && &hit.version <= existing_version {
+        debug!("Found version is not newer: {}; Skipping.", &hit.version);
+        return Ok(None);
+    }
+    info!("Downloading version {}", &hit.version);
+
+    let download_url = &hit.download_url;
+    let ext = {
+        if vec![".tar.gz", ".tgz"]
+            .iter()
+            .any(|ext| download_url.ends_with(ext))
+        {
+            ".tar.gz"
+        } else if download_url.ends_with(".tar.xz") {
+            ".tar.xz"
+        } else if download_url.ends_with(".zip") {
+            ".zip"
+        } else if download_url.ends_with(".exe") {
+            ".exe"
+        } else {
+            warn!("Failed to match known file extensions. Skipping.");
+            return Ok(None);
+        }
+    };
+
+    let mut resp = reqwest::blocking::get(download_url)?;
+    let mut buf: Vec<u8> = Vec::new();
+    resp.copy_to(&mut buf)?;
+
+    // if let Some(target_filename) = match conf.target_filename_to_extract_from_archive {
+    //
+    // };
+    // let dlfilename = if let Some(filename) = &conf.target_filename_to_extract_from_archive {
+    //     filename
+    // } else if let Some(filename) = &conf.desired_filename {
+    //     filename
+    // } else {
+    //     return Err(anyhow::Error::msg(
+    //         "Either \"desired_filename\" or \"target_filename\" must be given",
+    //     ));
+    // }
+    //     .clone() + ext;
+
+    if ext == ".tar.xz" {
+        // TODO: this should return the file that got created; and then we can
+        //  decide if to rename that file.
+        extract_target_from_tarxz(&mut buf, &conf);
+        if let Some(desired_filename) = &conf.desired_filename {
+            let extracted_filename = conf
+                .target_filename_to_extract_from_archive
+                .as_ref()
+                .unwrap();
+            if desired_filename != extracted_filename {
+                debug!(
+                    "Extract filename is different to desired, renaming {} \
+                            to {}",
+                    extracted_filename, desired_filename
+                );
+                std::fs::rename(extracted_filename, desired_filename)?;
+            }
+        }
+    } else if ext == ".zip" {
+        extract_target_from_zipfile(&mut buf, &conf);
+        if let Some(desired_filename) = &conf.desired_filename {
+            let extracted_filename = conf
+                .target_filename_to_extract_from_archive
+                .as_ref()
+                .unwrap();
+            if desired_filename != extracted_filename {
+                debug!(
+                    "Extract filename is different to desired, renaming {} \
+                            to {}",
+                    extracted_filename, desired_filename
+                );
+                std::fs::rename(extracted_filename, desired_filename)?;
+            }
+        }
+    } else if ext == ".tar.gz" {
+        extract_target_from_tarfile(&mut buf, &conf);
+        if let Some(desired_filename) = &conf.desired_filename {
+            let extracted_filename = conf
+                .target_filename_to_extract_from_archive
+                .as_ref()
+                .unwrap();
+            if desired_filename != extracted_filename {
+                debug!(
+                    "Extract filename is different to desired, renaming {} \
+                            to {}",
+                    extracted_filename, desired_filename
+                );
+                std::fs::rename(extracted_filename, desired_filename)?;
+            }
+        }
+    } else if ext == ".exe" {
+        // Windows executables are not compressed, so we only need to
+        // handle renames, if the option is given.
+        let desired_filename = conf.desired_filename.as_ref().unwrap();
+        let mut output = std::fs::File::create(&desired_filename)?;
+        info!("Saving {} to {}", &download_url, desired_filename);
+        output.write_all(&buf)?;
+    };
+
+    Ok(Some(hit.version))
+}
+
+fn parse_html_page(conf: &Config, url: &str) -> Result<Option<Hit>> {
+    debug!("Fetching page at {}", &url);
+    let resp = reqwest::blocking::get(url)?;
     let body = resp.text()?;
-    let fragment = Html::parse_document(&body);
-    let stories = Selector::parse(&conf.anchor_tag).unwrap();
-    let versions = Selector::parse(conf.version_tag.as_ref().unwrap()).unwrap();
 
+    debug!("Setting up parsers");
+    let fragment = Html::parse_document(&body);
+    let stories = match Selector::parse(&conf.anchor_tag) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Parser error at {}: {:?}", url, e);
+            return Ok(None);
+        }
+    };
+    let versions = Selector::parse(conf.version_tag.as_ref().unwrap()).unwrap();
     let re_pat = regex::Regex::new(&conf.anchor_text)?;
 
+    debug!("Looking for matches...");
     for story in fragment.select(&stories) {
         if let Some(href) = &story.value().attr("href") {
-            // debug!("Tag hit: {:?} {:?}", &story, &story.text());
-            debug!("Found tag: {}", &href);
-
-            let caps = match re_pat.captures_iter(&href).next() {
-                Some(c) => c,
-                None => continue,
-            };
-
-            // Version checking - must be done before we download files.
-            let new_version: Option<String> = match fragment.select(&versions).next() {
-                Some(m) => {
-                    // debug!("{}", m.text().join(""));
-                    info!("Found a match on versions tag: {:?}", m.text().join(""));
-                    // if let Some(x) = m.value().attr("href") {
-                    //     info!("Found a match on versions tag: {:?}", x);
-                    // }
-                    let existing_version = conf.version.as_ref().unwrap();
-                    let found_version = m.text().join("");
-                    if &found_version <= existing_version {
-                        info!("Found version is not newer: {}; Skipping.", found_version);
-                        return Ok(None);
-                    } else {
-                        info!(
-                            "Found version {} is newer than existing version {}",
-                            &found_version, existing_version
-                        );
-                        Some(found_version)
-                    }
-                }
-                None => None,
-            };
-
-            // let new_version = match caps.name("version") {
-            //     Some(version) => match &conf.version {
-            //         Some(v) => {
-            //             if v == version.as_str() {
-            //                 Some(version.as_str().to_owned())
-            //             } else {
-            //                 None
-            //             }
-            //         }
-            //         None => None,
-            //     },
-            //     None => None,
-            // };
-
+            // This is the download target in the matched link
             let download_url = format!("https://github.com{}", &href);
             debug!("download_url: {}", &download_url);
 
-            let mut resp = reqwest::blocking::get(&download_url).unwrap();
-            let ext = {
-                if vec![".tar.gz", ".tgz"]
-                    .iter()
-                    .any(|ext| href.ends_with(ext))
-                {
-                    ".tar.gz"
-                } else if href.ends_with(".tar.xz") {
-                    ".tar.xz"
-                } else if href.ends_with(".zip") {
-                    ".zip"
-                } else if href.ends_with(".exe") {
-                    ".exe"
-                } else {
-                    info!("Unknown file extension. Skipping.");
-                    break;
+            let caps = match re_pat.captures_iter(&href).next() {
+                Some(c) => {
+                    debug!("Found a match for anchor_text");
+                    c
                 }
+                None => continue,
             };
 
-            let mut buf: Vec<u8> = Vec::new();
-            resp.copy_to(&mut buf)?;
-
-            // if let Some(target_filename) = match conf.target_filename_to_extract_from_archive {
-            //
-            // };
-            let dlfilename = if let Some(filename) = &conf.target_filename_to_extract_from_archive {
-                filename
-            } else if let Some(filename) = &conf.desired_filename {
-                filename
+            return if let Some(raw_version) = fragment.select(&versions).next() {
+                let version = raw_version.text().join("");
+                info!("Found a match on versions tag: {}", version);
+                Ok(Some(Hit {
+                    version,
+                    download_url,
+                }))
             } else {
-                return Err(anyhow::Error::msg(
-                    "Either \"desired_filename\" or \"target_filename\" must be given",
-                ));
-            }
-            .clone() + ext;
-
-            if ext == ".tar.xz" {
-                // This will handle both target filename extraction and renaming
-                extract_target_from_tarxz(&mut buf, &conf);
-                if let Some(desired_filename) = &conf.desired_filename {
-                    let extracted_filename = conf
-                        .target_filename_to_extract_from_archive
-                        .as_ref()
-                        .unwrap();
-                    if desired_filename != extracted_filename {
-                        debug!(
-                            "Extract filename is different to desired, renaming {} \
-                            to {}",
-                            extracted_filename, desired_filename
-                        );
-                        std::fs::rename(extracted_filename, desired_filename)?;
-                    }
-                }
-            } else if ext == ".zip" {
-                // This will handle both target filename extraction and renaming
-                extract_target_from_zipfile(&mut buf, &conf);
-                if let Some(desired_filename) = &conf.desired_filename {
-                    let extracted_filename = conf
-                        .target_filename_to_extract_from_archive
-                        .as_ref()
-                        .unwrap();
-                    if desired_filename != extracted_filename {
-                        debug!(
-                            "Extract filename is different to desired, renaming {} \
-                            to {}",
-                            extracted_filename, desired_filename
-                        );
-                        std::fs::rename(extracted_filename, desired_filename)?;
-                    }
-                }
-            } else if ext == ".tar.gz" {
-                // This will handle both target filename extraction and renaming
-                extract_target_from_tarfile(&mut buf, &conf);
-                if let Some(desired_filename) = &conf.desired_filename {
-                    let extracted_filename = conf
-                        .target_filename_to_extract_from_archive
-                        .as_ref()
-                        .unwrap();
-                    if desired_filename != extracted_filename {
-                        debug!(
-                            "Extract filename is different to desired, renaming {} \
-                            to {}",
-                            extracted_filename, desired_filename
-                        );
-                        std::fs::rename(extracted_filename, desired_filename)?;
-                    }
-                }
-            } else if ext == ".exe" {
-                // Windows executables are not compressed, so we only need to
-                // handle renames, if the option is given.
-                let desired_filename = conf.desired_filename.as_ref().unwrap();
-                let mut output = std::fs::File::create(&desired_filename)?;
-                info!("Writing {} from {}", desired_filename, &href);
-                output.write_all(&buf)?;
+                warn!(
+                    "Download link {} was found but failed to match version \
+                       tag \"{}\"",
+                    &download_url,
+                    conf.version_tag.as_ref().unwrap()
+                );
+                Ok(None)
             };
-
-            return Ok(new_version);
         }
     }
-
+    warn!("Matched nothing at url {}", url);
     Ok(None)
 }
 
@@ -375,7 +392,7 @@ fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
 
     for file in archive.entries().unwrap() {
         let mut file = file.unwrap();
-        // println!("This is what I found in the tar: {:?}", &file.header());
+        trace!("This is what I found in the tar.xz: {:?}", &file.header());
         let raw_path = &file.header().path().unwrap();
         debug!(
             "tar.gz, got filename: {}",
@@ -433,7 +450,7 @@ fn extract_target_from_tarxz(compressed: &mut [u8], conf: &Config) {
 
     for file in archive.entries().unwrap() {
         let mut file = file.unwrap();
-        debug!("This is what I found in the tar.xz: {:?}", &file.header());
+        trace!("This is what I found in the tar.xz: {:?}", &file.header());
         let raw_path = &file.header().path().unwrap();
         debug!(
             "tar.gz, got filename: {}",
