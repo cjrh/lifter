@@ -1,15 +1,9 @@
-#[macro_use]
-extern crate fstrings;
-
 use anyhow::Result;
 use itertools::Itertools;
 use log::*;
 use rayon::prelude::*;
 use scraper::{Html, Selector};
-use std::error::Error;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
-use structopt::StructOpt;
 
 const PATTERN: &str = r###"(?P<binname>[a-zA-Z][a-zA-Z0-9_]+)-(?P<version>(?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)-(?P<platform>(?:[a-zA-Z0-9_]-?)+)"###;
 
@@ -57,8 +51,6 @@ struct Hit {
 #[derive(structopt::StructOpt)]
 #[structopt()]
 struct Args {
-    #[structopt(short = "p", long = "project", env = "PROJECT", default_value = "blah")]
-    project: String,
     /// Silence all output
     #[structopt(short = "q", long = "quiet")]
     quiet: bool,
@@ -89,7 +81,7 @@ fn main(args: Args) -> Result<()> {
     let conf = tini::Ini::from_file(&filename).unwrap();
     let sections = conf.iter().collect_vec();
     sections.par_iter().for_each(
-        |(section, hm)| match run_section(section, &conf, filename) {
+        |(section, _hm)| match run_section(section, &conf, filename) {
             Ok(_) => (),
             Err(e) => {
                 error!("{}", e);
@@ -127,7 +119,11 @@ fn run_section(section: &str, conf: &tini::Ini, filename: &str) -> Result<()> {
             Some(section.to_owned())
         };
     cf.version = get("version");
-    cf.desired_filename = get("desired_filename");
+    cf.desired_filename = if let Some(name) = get("desired_filename") {
+        Some(name)
+    } else {
+        cf.target_filename_to_extract_from_archive.clone()
+    };
 
     if !std::path::Path::new(&cf.target_filename).exists() {
         if let Some(new_version) = process(&mut cf)? {
@@ -304,13 +300,10 @@ fn parse_html_page(conf: &Config, url: &str) -> Result<Option<Hit>> {
             let download_url = format!("https://github.com{}", &href);
             debug!("download_url: {}", &download_url);
 
-            let caps = match re_pat.captures_iter(&href).next() {
-                Some(c) => {
-                    debug!("Found a match for anchor_text");
-                    c
-                }
-                None => continue,
-            };
+            if !re_pat.is_match(&href) {
+                continue;
+            }
+            debug!("Found a match for anchor_text");
 
             return if let Some(raw_version) = fragment.select(&versions).next() {
                 let version = raw_version.text().join("");
@@ -384,7 +377,7 @@ fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) {
 
 fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
     let mut cbuf = std::io::Cursor::new(compressed);
-    let mut gzip_archive = flate2::read::GzDecoder::new(&mut cbuf);
+    let gzip_archive = flate2::read::GzDecoder::new(&mut cbuf);
     let mut archive = tar::Archive::new(gzip_archive);
 
     let target_filename = conf
@@ -426,23 +419,8 @@ fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
 }
 
 fn extract_target_from_tarxz(compressed: &mut [u8], conf: &Config) {
-    let mut cbuf = std::io::Cursor::new(compressed);
-    let mut buf: Vec<u8> = Vec::new();
-    let mut bw = std::io::Cursor::new(&mut buf);
-
-    // lzma_rs::xz_decompress(&mut cbuf, &mut bw).expect("Problem xz_decompress");
-
+    let cbuf = std::io::Cursor::new(compressed);
     let mut decompressor = xz2::read::XzDecoder::new(cbuf);
-
-    // let mut xzf = lzma::LzmaReader::new_decompressor(cbuf).expect("Problem decompressing");
-
-    // let decode_options = lzma_rs::decompress::Options {
-    //     unpacked_size: lzma_rs::decompress::UnpackedSize::ReadFromHeader,
-    // };
-    // lzma_rs::lzma_decompress_with_options(&mut cbuf, &mut bw, &decode_options)
-    //     .expect("Problem lzma_decompress_with_options");
-
-    // let mut c = std::io::Cursor::new(&mut bw);
     let mut archive = tar::Archive::new(&mut decompressor);
 
     let target_filename = conf
