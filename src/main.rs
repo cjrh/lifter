@@ -4,6 +4,7 @@ extern crate fstrings;
 use anyhow::Result;
 use itertools::Itertools;
 use log::*;
+use rayon::prelude::*;
 use scraper::{Html, Selector};
 use std::error::Error;
 use std::io::{Read, Write};
@@ -86,11 +87,15 @@ fn main(args: Args) -> Result<()> {
 
     let filename = "binsync.config";
     let conf = tini::Ini::from_file(&filename).unwrap();
-    for (section, hm) in conf.iter() {
-        debug!("Checking {}...", &section);
-        run_section(section, &conf, filename)?;
-    }
-
+    let sections = conf.iter().collect_vec();
+    sections.par_iter().for_each(
+        |(section, hm)| match run_section(section, &conf, filename) {
+            Ok(_) => (),
+            Err(e) => {
+                error!("{}", e);
+            }
+        },
+    );
     Ok(())
 }
 
