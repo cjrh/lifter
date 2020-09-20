@@ -5,6 +5,9 @@ use rayon::prelude::*;
 use scraper::{Html, Selector};
 use std::io::{Read, Write};
 
+#[cfg(target_family = "unix")]
+use std::os::unix::fs::PermissionsExt;
+
 const PATTERN: &str = r###"(?P<binname>[a-zA-Z][a-zA-Z0-9_]+)-(?P<version>(?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)-(?P<platform>(?:[a-zA-Z0-9_]-?)+)"###;
 
 #[derive(Default, Debug)]
@@ -178,6 +181,11 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
     info!("Downloading version {}", &hit.version);
 
     let download_url = &hit.download_url;
+    warn!(
+        "download url {} {}",
+        &download_url,
+        &download_url.contains('.')
+    );
     let ext = {
         if vec![".tar.gz", ".tgz"]
             .iter()
@@ -190,6 +198,10 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
             ".zip"
         } else if download_url.ends_with(".exe") {
             ".exe"
+        } else if !download_url.rsplit('/').next().unwrap().contains('.') {
+            // This will be treated as the binary
+            warn!("Returning empty string as ext {}", &download_url);
+            ""
         } else {
             warn!("Failed to match known file extensions. Skipping.");
             return Ok(None);
@@ -264,13 +276,26 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
                 std::fs::rename(extracted_filename, desired_filename)?;
             }
         }
-    } else if ext == ".exe" {
+    } else if vec![".exe", ""].contains(&ext) {
         // Windows executables are not compressed, so we only need to
         // handle renames, if the option is given.
         let desired_filename = conf.desired_filename.as_ref().unwrap();
         let mut output = std::fs::File::create(&desired_filename)?;
         info!("Saving {} to {}", &download_url, desired_filename);
         output.write_all(&buf)?;
+
+        if cfg!(unix) && ext == "" {
+            // This file is probably a unix binary. It won't automatically have executable
+            // permissions, but we can just touch that up here. Note that this code path
+            // doesn't work on Windows. Ideas?
+            warn!(
+                "Changing the permissions of downloaded file: {}",
+                &desired_filename
+            );
+            let mut perms = std::fs::metadata(&desired_filename)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&desired_filename, perms)?;
+        }
     };
 
     Ok(Some(hit.version))
