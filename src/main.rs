@@ -74,11 +74,6 @@ fn main(args: Args) -> Result<()> {
         .timestamp(args.ts.unwrap_or(stderrlog::Timestamp::Off))
         .init()
         .unwrap();
-    trace!("trace message");
-    debug!("debug message");
-    info!("info message");
-    warn!("warn message");
-    error!("error message");
 
     let filename = "binsync.config";
     let conf = tini::Ini::from_file(&filename).unwrap();
@@ -198,10 +193,18 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
             ".zip"
         } else if download_url.ends_with(".exe") {
             ".exe"
-        } else if !download_url.rsplit('/').next().unwrap().contains('.') {
-            // This will be treated as the binary
-            warn!("Returning empty string as ext {}", &download_url);
-            ""
+        } else if let Some(suffix) = slice_from_end(&download_url, 8) {
+            // Look at the last 8 chars of the url -> if there's no dot, that
+            // probably means no file extension is present, which likely means that
+            // the download is a binary.
+            if !suffix.contains('.') {
+                // This will be treated as the binary
+                debug!("Returning empty string as ext {}", &download_url);
+                ""
+            } else {
+                warn!("Failed to match known file extensions. Skipping.");
+                return Ok(None);
+            }
         } else {
             warn!("Failed to match known file extensions. Skipping.");
             return Ok(None);
@@ -227,55 +230,11 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
     //     .clone() + ext;
 
     if ext == ".tar.xz" {
-        // TODO: this should return the file that got created; and then we can
-        //  decide if to rename that file.
         extract_target_from_tarxz(&mut buf, &conf);
-        if let Some(desired_filename) = &conf.desired_filename {
-            let extracted_filename = conf
-                .target_filename_to_extract_from_archive
-                .as_ref()
-                .unwrap();
-            if desired_filename != extracted_filename {
-                debug!(
-                    "Extract filename is different to desired, renaming {} \
-                            to {}",
-                    extracted_filename, desired_filename
-                );
-                std::fs::rename(extracted_filename, desired_filename)?;
-            }
-        }
     } else if ext == ".zip" {
         extract_target_from_zipfile(&mut buf, &conf);
-        if let Some(desired_filename) = &conf.desired_filename {
-            let extracted_filename = conf
-                .target_filename_to_extract_from_archive
-                .as_ref()
-                .unwrap();
-            if desired_filename != extracted_filename {
-                debug!(
-                    "Extract filename is different to desired, renaming {} \
-                            to {}",
-                    extracted_filename, desired_filename
-                );
-                std::fs::rename(extracted_filename, desired_filename)?;
-            }
-        }
     } else if ext == ".tar.gz" {
         extract_target_from_tarfile(&mut buf, &conf);
-        if let Some(desired_filename) = &conf.desired_filename {
-            let extracted_filename = conf
-                .target_filename_to_extract_from_archive
-                .as_ref()
-                .unwrap();
-            if desired_filename != extracted_filename {
-                debug!(
-                    "Extract filename is different to desired, renaming {} \
-                            to {}",
-                    extracted_filename, desired_filename
-                );
-                std::fs::rename(extracted_filename, desired_filename)?;
-            }
-        }
     } else if vec![".exe", ""].contains(&ext) {
         // Windows executables are not compressed, so we only need to
         // handle renames, if the option is given.
@@ -283,22 +242,42 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
         let mut output = std::fs::File::create(&desired_filename)?;
         info!("Saving {} to {}", &download_url, desired_filename);
         output.write_all(&buf)?;
-
-        if cfg!(unix) && ext == "" {
-            // This file is probably a unix binary. It won't automatically have executable
-            // permissions, but we can just touch that up here. Note that this code path
-            // doesn't work on Windows. Ideas?
-            warn!(
-                "Changing the permissions of downloaded file: {}",
-                &desired_filename
-            );
-            let mut perms = std::fs::metadata(&desired_filename)?.permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&desired_filename, perms)?;
-        }
     };
 
+    if let Some(desired_filename) = &conf.desired_filename {
+        let extracted_filename = conf
+            .target_filename_to_extract_from_archive
+            .as_ref()
+            .unwrap();
+        if desired_filename != extracted_filename {
+            debug!(
+                "Extract filename is different to desired, renaming {} \
+                            to {}",
+                extracted_filename, desired_filename
+            );
+            std::fs::rename(extracted_filename, desired_filename)?;
+        }
+    }
+
+    if let Some(filename) = &conf.desired_filename {
+        if ext != ".exe" {
+            set_executable(&filename)?;
+        }
+    }
+
     Ok(Some(hit.version))
+}
+
+fn set_executable(filename: &str) -> Result<()> {
+    if cfg!(unix) {
+        let mut perms = std::fs::metadata(&filename)?.permissions();
+        if perms.mode() & 0o111 == 0 {
+            debug!("File {} is not yet executable, setting bits.", filename);
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&filename, perms)?;
+        }
+    }
+    Ok(())
 }
 
 fn parse_html_page(conf: &Config, url: &str) -> Result<Option<Hit>> {
@@ -350,6 +329,10 @@ fn parse_html_page(conf: &Config, url: &str) -> Result<Option<Hit>> {
     }
     warn!("Matched nothing at url {}", url);
     Ok(None)
+}
+
+fn slice_from_end(s: &str, n: usize) -> Option<&str> {
+    s.char_indices().rev().nth(n).map(|(i, _)| &s[i..])
 }
 
 fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) {
