@@ -179,11 +179,6 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
     info!("Downloading version {}", &hit.version);
 
     let download_url = &hit.download_url;
-    warn!(
-        "download url {} {}",
-        &download_url,
-        &download_url.contains('.')
-    );
     let ext = {
         if vec![".tar.gz", ".tgz"]
             .iter()
