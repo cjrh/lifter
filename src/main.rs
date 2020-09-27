@@ -63,6 +63,9 @@ struct Args {
     /// Timestamp (sec, ms, ns, none)
     #[structopt(short = "t", long = "timestamp")]
     ts: Option<stderrlog::Timestamp>,
+    /// Verbose mode (-v, -vv, -vvv, etc)
+    #[structopt(parse(from_os_str), short = "o", long = "output-dir")]
+    output_dir: Option<std::path::PathBuf>,
 }
 
 #[paw::main]
