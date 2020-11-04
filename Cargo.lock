@@ -187,7 +187,7 @@ version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a82b366ae14633c67a1cbb4aa3738210a23f77d2868a0fd50faa23a956f9ec4"
 dependencies = [
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
  "lazy_static",
  "log",
  "num-traits",
@@ -359,11 +359,11 @@ dependencies = [
 
 [[package]]
 name = "flate2"
-version = "1.0.17"
+version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "766d0e77a2c1502169d4a93ff3b8c15a71fd946cd0126309752104e5f3c46d94"
+checksum = "7411863d55df97a419aa64cb4d2f167103ea9d767e2c54a1868b7ac3f6b47129"
 dependencies = [
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
  "crc32fast",
  "libc",
  "miniz_oxide",
