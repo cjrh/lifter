@@ -8,6 +8,15 @@ use std::io::{Read, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 
+/// This pattern matches the format of how filenames of binaries are
+/// usually written out on github. It will match things like:
+///
+///     binsync-0.13.4-linux-x86_64
+///
+/// The groups will pull out these fields:
+///     binname: "binsync"
+///     version: "0.13.4"
+///     platform: "linux-x86_64"
 const PATTERN: &str = r###"(?P<binname>[a-zA-Z][a-zA-Z0-9_]+)-(?P<version>(?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)-(?P<platform>(?:[a-zA-Z0-9_]-?)+)"###;
 
 #[derive(Default, Debug)]
@@ -266,6 +275,8 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
     Ok(Some(hit.version))
 }
 
+/// Change file permissions to be executable. This only happens on
+/// posix; on Windows it does nothing.
 fn set_executable(filename: &str) -> Result<()> {
     if cfg!(unix) {
         let mut perms = std::fs::metadata(&filename)?.permissions();
@@ -329,6 +340,7 @@ fn parse_html_page(conf: &Config, url: &str) -> Result<Option<Hit>> {
     Ok(None)
 }
 
+/// Returns a slice of the last n characters of a string
 fn slice_from_end(s: &str, n: usize) -> Option<&str> {
     s.char_indices().rev().nth(n).map(|(i, _)| &s[i..])
 }
