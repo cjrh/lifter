@@ -11,10 +11,10 @@ use std::os::unix::fs::PermissionsExt;
 /// This pattern matches the format of how filenames of binaries are
 /// usually written out on github. It will match things like:
 ///
-///     binsync-0.13.4-linux-x86_64
+///     lifter-0.13.4-linux-x86_64
 ///
 /// The groups will pull out these fields:
-///     binname: "binsync"
+///     binname: "lifter"
 ///     version: "0.13.4"
 ///     platform: "linux-x86_64"
 const PATTERN: &str = r###"(?P<binname>[a-zA-Z][a-zA-Z0-9_]+)-(?P<version>(?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)-(?P<platform>(?:[a-zA-Z0-9_]-?)+)"###;
@@ -48,6 +48,7 @@ struct Config {
 impl Config {
     fn new() -> Config {
         Config {
+            // TODO: the latest should be the default here.
             url_template: String::from("https://github.com/{project}/releases"),
             pattern: String::from(PATTERN),
             ..Default::default()
@@ -87,7 +88,7 @@ fn main(args: Args) -> Result<()> {
         .init()
         .unwrap();
 
-    let filename = "binsync.config";
+    let filename = "lifter.config";
     let conf = tini::Ini::from_file(&filename).unwrap();
     let sections = conf.iter().collect_vec();
     sections.par_iter().for_each(
@@ -119,6 +120,11 @@ fn run_section(section: &str, conf: &tini::Ini, filename: &str) -> Result<()> {
     debug!("Processing: {}", &cf.page_url);
 
     // Now the remaining values
+    // get("anchor_tag").and_then(|v| {
+    //     cf.anchor_tag = v;
+    //     None
+    // });
+
     cf.anchor_tag = get("anchor_tag").unwrap();
     cf.anchor_text = get("anchor_text").unwrap();
     cf.version_tag = get("version_tag");
@@ -271,6 +277,9 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
             set_executable(&filename)?;
         }
     }
+    // lifter
+    // marauder
+    // purloin
 
     Ok(Some(hit.version))
 }

@@ -1,5 +1,5 @@
 [package]
-name = "binsync"
+name = "lifter"
 version = "0.1.0"
 authors = ["Caleb Hattingh <caleb.hattingh@gmail.com>"]
 edition = "2018"
