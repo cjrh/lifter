@@ -54,30 +54,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "904dfeac50f3cdaba28fc6f57fdcddb75f49ed61346676a78c4ffe55877802fd"
 
 [[package]]
-name = "binsync"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "compression",
- "flate2",
- "itertools",
- "log",
- "paw",
- "rayon",
- "regex",
- "reqwest",
- "scraper",
- "select",
- "stderrlog",
- "structopt",
- "tar",
- "tini",
- "toml",
- "xz2",
- "zip",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -691,6 +667,30 @@ name = "libc"
 version = "0.2.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7282d924be3275cec7f6756ff4121987bc6481325397dde6ba3e7802b1a8b1c"
+
+[[package]]
+name = "lifter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "compression",
+ "flate2",
+ "itertools",
+ "log",
+ "paw",
+ "rayon",
+ "regex",
+ "reqwest",
+ "scraper",
+ "select",
+ "stderrlog",
+ "structopt",
+ "tar",
+ "tini",
+ "toml",
+ "xz2",
+ "zip",
+]
 
 [[package]]
 name = "log"
