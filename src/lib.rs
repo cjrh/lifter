@@ -6,7 +6,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use log::*;
 use scraper::{Html, Selector};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// This pattern matches the format of how filenames of binaries are
 /// usually written out on github. It will match things like:
@@ -99,7 +99,7 @@ pub fn run_section(
         cf.target_filename_to_extract_from_archive.clone()
     };
 
-    if !std::path::Path::new(&cf.target_filename).exists() {
+    if !Path::new(&cf.target_filename).exists() {
         if let Some(new_version) = process(&mut cf, output_dir)? {
             // New version, must update the version number in the
             // config file.
@@ -131,7 +131,7 @@ fn target_file_already_exists(conf: &Config) -> bool {
         panic!("This should be impossible")
     };
 
-    std::path::Path::new(&filename_to_check).exists()
+    Path::new(&filename_to_check).exists()
 }
 
 fn process(conf: &mut Config, output_dir: &PathBuf) -> Result<Option<String>> {
@@ -324,7 +324,7 @@ fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> Result<(
         .collect::<Vec<String>>()
     {
         let mut file = archive.by_name(&fname)?;
-        let path = std::path::Path::new(&fname);
+        let path = Path::new(&fname);
         debug!(
             "zip, got filename: {}",
             &path.file_name().unwrap().to_str().unwrap()
