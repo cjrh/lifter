@@ -119,12 +119,6 @@ fn run_section(section: &str, conf: &tini::Ini, filename: &str) -> Result<()> {
     };
     debug!("Processing: {}", &cf.page_url);
 
-    // Now the remaining values
-    // get("anchor_tag").and_then(|v| {
-    //     cf.anchor_tag = v;
-    //     None
-    // });
-
     cf.anchor_tag = get("anchor_tag").unwrap();
     cf.anchor_text = get("anchor_text").unwrap();
     cf.version_tag = get("version_tag");
@@ -277,9 +271,6 @@ fn process(conf: &mut Config) -> Result<Option<String>> {
             set_executable(&filename)?;
         }
     }
-    // lifter
-    // marauder
-    // purloin
 
     Ok(Some(hit.version))
 }
