@@ -11,12 +11,12 @@ use std::path::{Path, PathBuf};
 /// This pattern matches the format of how filenames of binaries are
 /// usually written out on github. It will match things like:
 ///
-///     lifter-0.13.4-linux-x86_64
+/// lifter-0.13.4-linux-x86_64
 ///
 /// The groups will pull out these fields:
-///     binname: "lifter"
-///     version: "0.13.4"
-///     platform: "linux-x86_64"
+/// binname: "lifter"
+/// version: "0.13.4"
+/// platform: "linux-x86_64"
 const PATTERN: &str = r###"(?P<binname>[a-zA-Z][a-zA-Z0-9_]+)-(?P<version>(?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)-(?P<platform>(?:[a-zA-Z0-9_]-?)+)"###;
 
 #[derive(Default, Debug)]
