@@ -23,7 +23,7 @@ Take your pick.
 $ ls -lh | rg lifter
 .rwxrwxr-x  6.9M caleb  2 Apr 12:27  lifter
 .rw-rw-r--   14k caleb  2 Apr 14:41  lifter.config
-$ ./binsync -vv
+$ ./lifter -vv
 INFO - Found a match on versions tag: v1.11.0
 INFO - Found a match on versions tag: v0.13.0
 INFO - Found a match on versions tag: 1,0,0
