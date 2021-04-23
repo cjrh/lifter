@@ -231,15 +231,18 @@ fn process(conf: &mut Config, output_dir: &PathBuf) -> Result<Option<String>> {
 
 /// Change file permissions to be executable. This only happens on
 /// posix; on Windows it does nothing.
+#[cfg(target_family = "unix")]
 fn set_executable(filename: &str) -> Result<()> {
-    if cfg!(unix) {
         let mut perms = std::fs::metadata(&filename)?.permissions();
         if perms.mode() & 0o111 == 0 {
             debug!("File {} is not yet executable, setting bits.", filename);
             perms.set_mode(0o755);
             std::fs::set_permissions(&filename, perms)?;
         }
-    }
+    Ok(())
+}
+#[cfg(not(target_family = "unix"))]
+fn set_executable(filename: &str) -> Result<()> {
     Ok(())
 }
 
