@@ -1659,9 +1659,9 @@ dependencies = [
 
 [[package]]
 name = "tini"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56a4282f997cbfef151bb02fb5e5f3ae9440f0fc56ee41b2e5fad1f0c8d3e83d"
+checksum = "a9603245e4b85810544fbb36ed5bd5617a9b9a4e00e1693eee8a6889c65a2670"
 
 [[package]]
 name = "tinyvec"
