@@ -2,6 +2,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use log::*;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 #[derive(structopt::StructOpt)]
 #[structopt()]
@@ -32,9 +33,31 @@ fn main(args: Args) -> Result<()> {
 
     let filename = "lifter.config";
     let conf = tini::Ini::from_file(&filename)?;
-    let sections = conf.iter().collect_vec();
+    let sections_raw = conf.iter().collect_vec();
     let current_dir = std::env::current_dir()?;
     let output_dir = args.output_dir.or(Some(current_dir)).unwrap();
+
+    // Partition config sections to separate templates out
+    let mut templates = HashMap::new();
+    let mut sections = vec![];
+    sections_raw.into_iter()
+        .for_each(|(name, seciter)| {
+            if name.starts_with("template:") {
+                let mut inner_map = HashMap::new();
+                seciter.for_each(|(field, value)| {
+                    inner_map.insert(field.clone(), value.clone());
+                });
+
+                templates.insert(
+                    name.strip_prefix("template:").unwrap().to_string(),
+                    inner_map,
+                );
+            } else {
+                sections.push((name.clone(), seciter));
+            }
+        });
+    println!("found templates: {:?}", templates);
+
     sections.par_iter().for_each(|(section, _hm)| {
         match lifter::run_section(section, &conf, filename, &output_dir) {
             Ok(_) => (),
