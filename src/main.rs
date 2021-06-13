@@ -31,7 +31,7 @@ fn main(args: Args) -> Result<()> {
         .unwrap();
 
     let filename = "lifter.config";
-    let conf = tini::Ini::from_file(&filename).unwrap();
+    let conf = tini::Ini::from_file(&filename)?;
     let sections = conf.iter().collect_vec();
     let current_dir = std::env::current_dir()?;
     let output_dir = args.output_dir.or(Some(current_dir)).unwrap();
@@ -43,5 +43,6 @@ fn main(args: Args) -> Result<()> {
             }
         }
     });
+
     Ok(())
 }

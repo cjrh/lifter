@@ -6,7 +6,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use log::*;
 use scraper::{Html, Selector};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// This pattern matches the format of how filenames of binaries are
 /// usually written out on github. It will match things like:
@@ -65,7 +65,7 @@ pub fn run_section(
     section: &str,
     conf: &tini::Ini,
     filename: &str,
-    output_dir: &PathBuf,
+    output_dir: &Path,
 ) -> Result<()> {
     // Happy helper for getting a value in this section of the ini file.
     let get = |s: &str| conf.get::<String>(&section, s);
@@ -76,12 +76,14 @@ pub fn run_section(
         Some(p) => cf.page_url = p,
         None => {
             return {
-                warn!("Section {} is missing required field \"page_url\"", section);
+                warn!(
+                    "[{}] Section {} is missing required field \
+                     \"page_url\"", section, section);
                 Ok(())
             };
         }
     };
-    debug!("Processing: {}", &cf.page_url);
+    debug!("[{}] Processing: {}", section, &cf.page_url);
 
     cf.anchor_tag = get("anchor_tag").unwrap();
     cf.anchor_text = get("anchor_text").unwrap();
@@ -100,12 +102,12 @@ pub fn run_section(
     };
 
     if !Path::new(&cf.target_filename).exists() {
-        if let Some(new_version) = process(&mut cf, output_dir)? {
+        if let Some(new_version) = process(section, &mut cf, output_dir)? {
             // New version, must update the version number in the
             // config file.
             info!(
-                "Downloaded new version of {}: {}",
-                &cf.target_filename, &new_version
+                "[{}] Downloaded new version of {}: {}",
+                section, &cf.target_filename, &new_version
             );
             // TODO: actually need a mutex around the following 3 lines.
             let conf_write = tini::Ini::from_file(&filename).unwrap();
@@ -114,10 +116,10 @@ pub fn run_section(
                 .item("version", &new_version)
                 .to_file(&filename)
                 .unwrap();
-            debug!("Updated config file.");
+            debug!("[{}] Updated config file.", section);
         }
     } else {
-        info!("Target {} exists, skipping.", &cf.target_filename);
+        info!("[{}] Target {} exists, skipping.", section, &cf.target_filename);
     }
     Ok(())
 }
@@ -134,10 +136,10 @@ fn target_file_already_exists(conf: &Config) -> bool {
     Path::new(&filename_to_check).exists()
 }
 
-fn process(conf: &mut Config, output_dir: &PathBuf) -> Result<Option<String>> {
+fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option<String>> {
     let url = &conf.page_url;
 
-    let parse_result = parse_html_page(&conf, url)?;
+    let parse_result = parse_html_page(section, &conf, url)?;
     let hit = match parse_result {
         Some(hit) => hit,
         None => return Ok(None),
@@ -145,10 +147,13 @@ fn process(conf: &mut Config, output_dir: &PathBuf) -> Result<Option<String>> {
 
     let existing_version = conf.version.as_ref().unwrap();
     if target_file_already_exists(&conf) && &hit.version <= existing_version {
-        debug!("Found version is not newer: {}; Skipping.", &hit.version);
+        debug!(
+            "[{}] Found version is not newer: {}; Skipping.", 
+            section, &hit.version
+        );
         return Ok(None);
     }
-    info!("Downloading version {}", &hit.version);
+    info!("[{}] Downloading version {}", section, &hit.version);
 
     let download_url = &hit.download_url;
     let ext = {
@@ -169,14 +174,16 @@ fn process(conf: &mut Config, output_dir: &PathBuf) -> Result<Option<String>> {
             // the download is a binary.
             if !suffix.contains('.') {
                 // This will be treated as the binary
-                debug!("Returning empty string as ext {}", &download_url);
+                debug!("[{}] Returning empty string as ext {}", section, &download_url);
                 ""
             } else {
-                warn!("Failed to match known file extensions. Skipping.");
+                warn!("[{}] Failed to match known file extensions. Skipping.",
+                    section);
                 return Ok(None);
             }
         } else {
-            warn!("Failed to match known file extensions. Skipping.");
+            warn!("[{}] Failed to match known file extensions. Skipping.",
+                section);
             return Ok(None);
         }
     };
@@ -199,7 +206,7 @@ fn process(conf: &mut Config, output_dir: &PathBuf) -> Result<Option<String>> {
         // let outfilename = od.push(std::path::Path::new(&fname));
         let desired_filename = conf.desired_filename.as_ref().unwrap();
         let mut output = std::fs::File::create(&desired_filename)?;
-        info!("Saving {} to {}", &download_url, desired_filename);
+        info!("[{}] Saving {} to {}", section, &download_url, desired_filename);
         output.write_all(&buf)?;
     };
 
@@ -210,9 +217,9 @@ fn process(conf: &mut Config, output_dir: &PathBuf) -> Result<Option<String>> {
             .unwrap();
         if desired_filename != extracted_filename {
             debug!(
-                "Extract filename is different to desired, renaming {} \
-                            to {}",
-                extracted_filename, desired_filename
+                "[{}] Extract filename is different to desired, renaming {} \
+                 to {}",
+                section, extracted_filename, desired_filename
             );
             // TODO: this must be updated to handle output_dir
             std::fs::rename(extracted_filename, desired_filename)?;
@@ -246,46 +253,47 @@ fn set_executable(filename: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_html_page(conf: &Config, url: &str) -> Result<Option<Hit>> {
-    debug!("Fetching page at {}", &url);
+fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
+    debug!("[{}] Fetching page at {}", section, &url);
     let resp = reqwest::blocking::get(url)?;
     let body = resp.text()?;
 
-    debug!("Setting up parsers");
+    debug!("[{}] Setting up parsers", section);
     let fragment = Html::parse_document(&body);
     let stories = match Selector::parse(&conf.anchor_tag) {
         Ok(s) => s,
         Err(e) => {
-            warn!("Parser error at {}: {:?}", url, e);
+            warn!("[{}] Parser error at {}: {:?}", section, url, e);
             return Ok(None);
         }
     };
     let versions = Selector::parse(conf.version_tag.as_ref().unwrap()).unwrap();
     let re_pat = regex::Regex::new(&conf.anchor_text)?;
 
-    debug!("Looking for matches...");
+    debug!("[{}] Looking for matches...", section);
     for story in fragment.select(&stories) {
         if let Some(href) = &story.value().attr("href") {
             // This is the download target in the matched link
             let download_url = format!("https://github.com{}", &href);
-            debug!("download_url: {}", &download_url);
+            debug!("[{}] download_url: {}", section, &download_url);
 
             if !re_pat.is_match(&href) {
                 continue;
             }
-            debug!("Found a match for anchor_text");
+            debug!("[{}] Found a match for anchor_text", section);
 
             return if let Some(raw_version) = fragment.select(&versions).next() {
                 let version = raw_version.text().join("");
-                info!("Found a match on versions tag: {}", version);
+                info!("[{}] Found a match on versions tag: {}", section, version);
                 Ok(Some(Hit {
                     version,
                     download_url,
                 }))
             } else {
                 warn!(
-                    "Download link {} was found but failed to match version \
-                       tag \"{}\"",
+                    "[{}] Download link {} was found but failed to match version \
+                     tag \"{}\"",
+                    section, 
                     &download_url,
                     conf.version_tag.as_ref().unwrap()
                 );
@@ -293,7 +301,7 @@ fn parse_html_page(conf: &Config, url: &str) -> Result<Option<Hit>> {
             };
         }
     }
-    warn!("Matched nothing at url {}", url);
+    warn!("[{}] Matched nothing at url {}", section, url);
     Ok(None)
 }
 
