@@ -2,11 +2,13 @@ use std::io::{Read, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use log::*;
 use scraper::{Html, Selector};
 use std::path::Path;
+use std::collections::HashMap;
+use strfmt::strfmt;
 
 /// This pattern matches the format of how filenames of binaries are
 /// usually written out on github. It will match things like:
@@ -17,11 +19,10 @@ use std::path::Path;
 /// binname: "lifter"
 /// version: "0.13.4"
 /// platform: "linux-x86_64"
-const PATTERN: &str = r###"(?P<binname>[a-zA-Z][a-zA-Z0-9_]+)-(?P<version>(?:[0-9]+\.[0-9]+)(?:\.[0-9]+)*)-(?P<platform>(?:[a-zA-Z0-9_]-?)+)"###;
 
 #[derive(Default, Debug)]
 struct Config {
-    url_template: String,
+    template: String,
     project: String,
     pattern: String,
     version: Option<String>,
@@ -49,8 +50,7 @@ impl Config {
     fn new() -> Config {
         Config {
             // TODO: the latest should be the default here.
-            url_template: String::from("https://github.com/{project}/releases"),
-            pattern: String::from(PATTERN),
+            template: String::from("https://github.com/{project}/releases"),
             ..Default::default()
         }
     }
@@ -61,42 +61,112 @@ struct Hit {
     download_url: String,
 }
 
+fn read_section_into_map(conf: &tini::Ini, section: &str) -> HashMap<String, String> {
+    let mut tmp = HashMap::new();
+    conf.section_iter(&section)
+        .for_each(|(k, v)| {
+            tmp.insert(k.clone(), v.clone());
+        });
+    tmp
+}
+
+type Templates = HashMap<String, HashMap<String, String>>;
+
+/// Mutate the config to replace a template with the template values.
+///
+/// If `template` is specified in a section, we must use it! Look up
+/// the fields that are defined in a template with that name, and 
+/// insert those fields into the `Config` object that represents
+/// that section.
+///
+/// Beyond simple substitution, the individual template values can
+/// also themselves be used as templates using the handlebars
+/// format. Any fields defined in the *section* can be substituted
+/// into each template item if the `{name}` of that item is used.
+fn insert_fields_from_template(
+    cf: &mut Config, 
+    templates: &Templates,
+    values: &HashMap<String, String>) -> Result<()> {
+
+    if let Some(t) = values.get("template") {
+        debug!("Config has a template: {:?}", &values);
+        cf.template = t.clone();
+        let template_fields = templates
+            .get(&cf.template)
+            .ok_or_else(|| anyhow!(
+                    "The specified template '{}' was not found in the \
+                    list of available templates: {:?}",
+                    &t, templates.keys().collect::<Vec<_>>()
+                    ))?;
+
+        if let Some(value) = template_fields.get("page_url") {
+            cf.page_url = strfmt(value, values)?;
+        };
+        if let Some(value) = template_fields.get("anchor_tag") {
+            cf.anchor_tag = strfmt(value, values)?;
+        };
+        if let Some(value) = template_fields.get("version_tag") {
+            cf.version_tag = Some(strfmt(value, values)?);
+        };
+    };
+
+    debug!("Substitutions complete: {:?}", &cf);
+    Ok(())
+}
+
+
 pub fn run_section(
     section: &str,
+    templates: &Templates, 
     conf: &tini::Ini,
     filename: &str,
     output_dir: &Path,
 ) -> Result<()> {
-    // Happy helper for getting a value in this section of the ini file.
-    let get = |s: &str| conf.get::<String>(&section, s);
+    let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
+    insert_fields_from_template(&mut cf, templates, &tmp)?; 
 
     // First get the project - required
-    match get("page_url") {
-        Some(p) => cf.page_url = p,
+    match tmp.get("page_url") {
+        Some(p) => cf.page_url = p.clone(),
         None => {
-            return {
-                warn!(
-                    "[{}] Section {} is missing required field \
-                     \"page_url\"", section, section);
-                Ok(())
-            };
+            if cf.page_url.is_empty() {
+                return {
+                    warn!(
+                        "[{}] Section {} is missing required field \
+                         \"page_url\"", section, section);
+                    Ok(())
+                };
+            }
+
         }
     };
     debug!("[{}] Processing: {}", section, &cf.page_url);
 
-    cf.anchor_tag = get("anchor_tag").unwrap();
-    cf.anchor_text = get("anchor_text").unwrap();
-    cf.version_tag = get("version_tag");
-    cf.target_filename_to_extract_from_archive =
-        if let Some(name) = get("target_filename_to_extract_from_archive") {
-            Some(name)
-        } else {
-            Some(section.to_owned())
-        };
-    cf.version = get("version");
-    cf.desired_filename = if let Some(name) = get("desired_filename") {
-        Some(name)
+    if let Some(value) = tmp.get("anchor_tag") {
+        cf.anchor_tag = strfmt(value, &tmp)?;
+    };
+
+    if let Some(value) = tmp.get("anchor_text") {
+        cf.anchor_text = strfmt(value, &tmp)?;
+    };
+
+    if let Some(value) = tmp.get("version_tag") {
+        cf.version_tag = Some(strfmt(value, &tmp)?);
+    };
+
+    cf.target_filename_to_extract_from_archive = if let Some(value) = tmp.get("target_filename_to_extract_from_archive") {
+        Some(strfmt(value, &tmp)?)
+    } else {
+        Some(section.to_owned())
+    };
+
+    if let Some(value) = tmp.get("version") {
+        cf.version = Some(strfmt(value, &tmp)?);
+    };
+
+    cf.desired_filename = if let Some(value) = tmp.get("desired_filename") {
+        Some(strfmt(value, &tmp)?)
     } else {
         cf.target_filename_to_extract_from_archive.clone()
     };
@@ -147,7 +217,7 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
 
     let existing_version = conf.version.as_ref().unwrap();
     if target_file_already_exists(&conf) && &hit.version <= existing_version {
-        debug!(
+        info!(
             "[{}] Found version is not newer: {}; Skipping.", 
             section, &hit.version
         );
