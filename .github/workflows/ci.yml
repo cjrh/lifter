@@ -134,24 +134,24 @@ jobs:
       if: matrix.target != ''
       run: ${{ env.CARGO }} test --verbose --workspace ${{ env.TARGET_FLAGS }}
 
-    - name: Test for existence of build artifacts (Windows)
-      if: matrix.os == 'windows-2019'
-      shell: bash
-      run: |
-        outdir="$(ci/cargo-out-dir "${{ env.TARGET_DIR }}")"
-        ls "$outdir/_rg.ps1" && file "$outdir/_rg.ps1"
-    - name: Test for existence of build artifacts (Unix)
-      if: matrix.os != 'windows-2019'
-      shell: bash
-      run: |
-        outdir="$(ci/cargo-out-dir "${{ env.TARGET_DIR }}")"
-        # TODO: Check for the man page generation here. For whatever reason,
-        # it seems to be intermittently failing in CI. No idea why.
-        # for f in rg.bash rg.fish rg.1; do
-        for f in rg.bash rg.fish; do
-          # We could use file -E here, but it isn't supported on macOS.
-          ls "$outdir/$f" && file "$outdir/$f"
-        done
+    # - name: Test for existence of build artifacts (Windows)
+    #   if: matrix.os == 'windows-2019'
+    #   shell: bash
+    #   run: |
+    #     outdir="$(ci/cargo-out-dir "${{ env.TARGET_DIR }}")"
+    #     ls "$outdir/_rg.ps1" && file "$outdir/_rg.ps1"
+    # - name: Test for existence of build artifacts (Unix)
+    #   if: matrix.os != 'windows-2019'
+    #   shell: bash
+    #   run: |
+    #     outdir="$(ci/cargo-out-dir "${{ env.TARGET_DIR }}")"
+    #     # TODO: Check for the man page generation here. For whatever reason,
+    #     # it seems to be intermittently failing in CI. No idea why.
+    #     # for f in rg.bash rg.fish rg.1; do
+    #     for f in rg.bash rg.fish; do
+    #       # We could use file -E here, but it isn't supported on macOS.
+    #       ls "$outdir/$f" && file "$outdir/$f"
+    #     done
   rustfmt:
     name: rustfmt
     runs-on: ubuntu-18.04
