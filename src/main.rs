@@ -19,14 +19,17 @@ struct Args {
     /// Verbose mode (-v, -vv, -vvv, etc)
     #[structopt(parse(from_os_str), short = "o", long = "output-dir")]
     output_dir: Option<std::path::PathBuf>,
-    #[structopt(short = "c", long = "config-file", default_value="lifter.config")]
+    #[structopt(short = "c", long = "config-file", default_value = "lifter.config")]
     configfile: String,
 }
 
 #[paw::main]
 fn main(args: Args) -> Result<()> {
     // We're using threads for IO so we can use more than cpu count
-    rayon::ThreadPoolBuilder::new().num_threads(16).build_global().unwrap();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(16)
+        .build_global()
+        .unwrap();
     stderrlog::new()
         .module(module_path!())
         .quiet(args.quiet)
