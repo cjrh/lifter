@@ -21,6 +21,7 @@ jobs:
       RUST_BACKTRACE: 1
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         build:
         # We test lifter on a pinned version of Rust, along with the moving
