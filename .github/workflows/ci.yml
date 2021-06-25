@@ -36,7 +36,7 @@ jobs:
         - nightly
         - nightly-musl
         - nightly-32
-        - nightly-mips
+        # - nightly-mips
         - nightly-arm
         - macos
         - win-msvc
