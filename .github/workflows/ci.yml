@@ -62,10 +62,10 @@ jobs:
           os: ubuntu-18.04
           rust: nightly
           target: i686-unknown-linux-gnu
-        - build: nightly-mips
-          os: ubuntu-18.04
-          rust: nightly
-          target: mips64-unknown-linux-gnuabi64
+        # - build: nightly-mips
+        #   os: ubuntu-18.04
+        #   rust: nightly
+        #   target: mips64-unknown-linux-gnuabi64
         - build: nightly-arm
           os: ubuntu-18.04
           rust: nightly
