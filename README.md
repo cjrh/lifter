@@ -19,18 +19,41 @@ Take your pick.
 
 ## Demo
 
+Requires the presence of a `lifter.config` file alongside the binary. You can
+use the example one in this repo.
+
 ```bash
 $ ls -lh | rg lifter
 .rwxrwxr-x  6.9M caleb  2 Apr 12:27  lifter
 .rw-rw-r--   14k caleb  2 Apr 14:41  lifter.config
 $ ./lifter -vv
-INFO - Found a match on versions tag: v1.11.0
-INFO - Found a match on versions tag: v0.13.0
-INFO - Found a match on versions tag: 1,0,0
-INFO - Found a match on versions tag: v0.7.5
-INFO - Found a match on versions tag: v0.12
-INFO - Found a match on versions tag: v8.2.1
-INFO - Found a match on versions tag: v0.1.0
+$ ./lifter -vv
+INFO - [thesauromatic.exe] Found a match on versions tag: Alpha, includes bumpversion
+INFO - [thesauromatic.exe] Found version is not newer: Alpha, includes bumpversion; Skipping.
+INFO - [tokei] Found a match on versions tag: v12.1.2
+INFO - [tokei] Found version is not newer: v12.1.2; Skipping.
+INFO - [ncspot] Found a match on versions tag: v0.7.3
+INFO - [ncspot] Found version is not newer: v0.7.3; Skipping.
+INFO - [starship.exe] Found a match on versions tag: v0.55.0
+INFO - [starship.exe] Found version is not newer: v0.55.0; Skipping.
+INFO - [caddy] Found a match on versions tag: v2.4.3
+INFO - [caddy] Found version is not newer: v2.4.3; Skipping.
+INFO - [gitea] Found a match on versions tag: v1.14.3
+INFO - [gitea] Found version is not newer: v1.14.3; Skipping.
+INFO - [ripgrep] Found a match on versions tag: 13.0.0
+INFO - [ripgrep] Found version is not newer: 13.0.0; Skipping.
+INFO - [sd] Found a match on versions tag: v0.7.6
+INFO - [sd] Found version is not newer: v0.7.6; Skipping.
+INFO - [fzf] Found a match on versions tag: 0.27.2
+INFO - [fzf] Found version is not newer: 0.27.2; Skipping.
+INFO - [bat] Found a match on versions tag: v0.18.1
+INFO - [bat] Found version is not newer: v0.18.1; Skipping.
+INFO - [fcp] Found a match on versions tag: v0.1.0
+INFO - [fcp] Found version is not newer: v0.1.0; Skipping.
+INFO - [ripgrep Windows] Found a match on versions tag: 13.0.0
+INFO - [ripgrep Windows] Found version is not newer: 13.0.0; Skipping.
+INFO - [dictomatic] Found a match on versions tag: First release
+INFO - [dictomatic] Found version is not newer: First release; Skipping.
 ...
 $ ls -l | rg rg
 .rwxr-xr-x  5.5M caleb  8 Feb  0:26  rg
@@ -129,3 +152,22 @@ archive. It will use the file extension (`.tar.gz` or `.zip`, or `.tgz` and a
 handful of others) to figure out how to do the decompression. If successful,
 the end result will be the target filename in the output directory; in this
 case, `rg` for the Linux target and `rg.exe` for the Windows target.
+
+## Geek creds
+
+Lifter can update itself. The config entry required to allow lifter to 
+update itself looks like:
+
+```
+[lifter]
+template = github_release_latest
+project = cjrh/lifter
+anchor_text = lifter-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
+version = 0.1.1
+
+[lifter.exe]
+template = github_release_latest
+project = cjrh/lifter
+anchor_text = lifter-(\d+\.\d+\.\d+)-x86_64-pc-windows-msvc.zip
+version = 0.1.1
+```
