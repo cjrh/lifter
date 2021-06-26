@@ -27,7 +27,6 @@ $ ls -lh | rg lifter
 .rwxrwxr-x  6.9M caleb  2 Apr 12:27  lifter
 .rw-rw-r--   14k caleb  2 Apr 14:41  lifter.config
 $ ./lifter -vv
-$ ./lifter -vv
 INFO - [thesauromatic.exe] Found a match on versions tag: Alpha, includes bumpversion
 INFO - [thesauromatic.exe] Found version is not newer: Alpha, includes bumpversion; Skipping.
 INFO - [tokei] Found a match on versions tag: v12.1.2
@@ -144,14 +143,97 @@ I think I've come across it on a Sourceforge page, for example.
 
 Finally, archives. Not all Github Releases artifacts are archives, some are
 just the executables themselves. But in the ripgrep examples above, the Linux
-download is a `.tar.gz` file, while the Windows download is a `.zip`. To deal
-with this, all you have to do is set the field
+download is a `.tar.gz` file, while the Windows download is a `.zip`.
+By default, *lifter* will search within the archive to find a file that 
+matches the *name* of that section. So if a section is called `[sd]` then
+*lifter* will search for a file called `sd` inside the `.tar.gz` 
+archive for that item. Likewise, for the section called `[sd.exe]`,
+it'll look for `sd.exe` inside the zipfile for that section.
+
+To override this, all you have to do is set the field
 `target_filename_to_extract_from_archive`. If this is present, *lifter* will
-aggressively try to extract a file with the given name from the downloaded
-archive. It will use the file extension (`.tar.gz` or `.zip`, or `.tgz` and a
-handful of others) to figure out how to do the decompression. If successful,
-the end result will be the target filename in the output directory; in this
-case, `rg` for the Linux target and `rg.exe` for the Windows target.
+use that name, rather than the name of the section to find the target file.
+archive. For example, in our ripgrep examples, we called the 
+section name, say, `[ripgrep Windows]`, but the file that we intend
+to extract from the archive is called `rg.exe`. This is why we
+set the target filename for extraction, explicitly. For ripgrep, 
+we could remove the target filename setting if the section names were
+changed to `[rg]` and `[rg.exe]`. In this case, the section names would 
+be the filenames lookup up in each respective archive.
+
+Sometimes things aren't so neat and we'd prefer to rename whatever
+is inside the archive. Consider the config for `[fcp]`:
+
+```ini
+[fcp]
+template = github_release_latest
+project = Svetlitski/fcp
+target_filename_to_extract_from_archive = fcp-0.1.0-x86_64-unknown-linux-gnu
+desired_filename = fcp
+anchor_text = fcp-(\d+\.\d+\.\d+)-x86_64-unknown-linux-gnu.zip
+version = v0.1.0
+```
+
+In this case, the name of the target executable as it appears inside the
+release archive is `fcp-0.1.0-x86_64-unknown-linux-gnu`. We would 
+prefer that it be called `fcp` after extraction. To force this, 
+set the `desired_filename` field. The extracted executable will
+be renamed to this after extraction.
+
+## Templates
+
+The description given in the *Details* section above is accurate but 
+laborious. It turns out that the CSS targeting is common for all 
+projects on the same site, e.g., Github Releases pages. Thus, there
+is support for templates in the config file definition.
+
+If you look at the example `lifter.config` file in this repo, what 
+you actually see for ripgrep is the following:
+
+```ini
+[template:github_release_latest]
+page_url = https://github.com/{project}/releases
+anchor_tag = html main details a
+version_tag = div.release-header a
+
+[ripgrep]
+template = github_release_latest
+project = BurntSushi/ripgrep
+anchor_text = ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
+target_filename_to_extract_from_archive = rg
+version = 13.0.0
+
+[starship.exe]
+template = github_release_latest
+project = starship/starship
+anchor_text = starship-x86_64-pc-windows-msvc.zip
+version = v0.55.0
+```
+
+What actually happens at runtime is that if a section, like `ripgrep`,
+assigns a `template`, all the fields from that template are copied 
+into that section's declarations. In the example above, `page_url`,
+`anchor_tag`, and `version_tag` will be copied into each of the
+sections for `[ripgrep]` and `[starship.exe]`.
+
+If you look carefully, you'll see that the template value for
+`page_url` above contains the variable `{project}`. That will
+be substituted for the value of `project` that is declared
+inside each of the sections. In the above example, `page_url`
+will be expanded to 
+
+```
+page_url = https://github.com/BurntSushi/ripgrep/releases
+```
+
+for the `[ripgrep]` section, and expanded to
+
+```
+page_url = https://github.com/starship/starship/releases
+```
+
+for the `[starship.exe]` project.
+
 
 ## Geek creds
 
