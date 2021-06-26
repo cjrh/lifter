@@ -94,7 +94,7 @@ the item on a page.
 
 Let's look at the ripgrep configuration entry:
 
-```inifile
+```ini
 [ripgrep]
 page_url = https://github.com/BurntSushi/ripgrep/releases/
 anchor_tag = html main div.release-entry div.release-main-section details a
@@ -241,7 +241,7 @@ for the `[starship.exe]` project.
 Lifter can update itself. The config entry required to allow lifter to 
 update itself looks like:
 
-```
+```ini
 [lifter]
 template = github_release_latest
 project = cjrh/lifter
