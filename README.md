@@ -89,8 +89,8 @@ and many others.
 
 I said that *lifter* is for fetch CLI binaries. That's what I'm *using* it
 for, but it's more than that. It's an engine for downloading things from
-web pages. There is a mechanism for specifying how to find the item on a
-page.
+web pages. There is a declarative mechanism for specifying how to find 
+the item on a page.
 
 Let's look at the ripgrep configuration entry:
 
@@ -116,7 +116,8 @@ Each section will download a file; one for Linux and one for Windows.
 The `anchor_tag` is the CSS selector for finding a section that contains
 the target download link.
 
-Within the `anchor_tag`, there can be many sections: this is how the Github
+If there are many tags matching the `anchor_tag`, all of them will be 
+checked to match the required `anchor_text`. This is how the Github
 Releases page works. In one "release" section, there can be many file
 downloads available. For example, one for each target architecture.
 So the `anchor_tag`, alone, is not enough to target the specific target
@@ -135,8 +136,8 @@ That's all that is needed to download the target file.
 Two more details require explanation: tracking the version number,
 and dealing with archives. For the version number, we have the `version_tag`,
 which is also a CSS selector to find a DOM element containing the version
-number to attach to the downloaded file. This version will also be stored
-and updated in `lifter.config`. It is plausible that you might have a
+number to attach to the downloaded file. This version will also be **stored
+and updated** in `lifter.config`. It is plausible that you might have a
 situation with a (non-Github) target page where the version number does
 not exist in its own DOM element. This scenario is currently unsupported.
 I think I've come across it on a Sourceforge page, for example.
@@ -253,3 +254,15 @@ project = cjrh/lifter
 anchor_text = lifter-(\d+\.\d+\.\d+)-x86_64-pc-windows-msvc.zip
 version = 0.1.1
 ```
+
+## Other alternatives
+
+A pre-existing project doing something very similar is 
+[webinstall](https://github.com/webinstall/webi-installers). By comparison,
+*lifter*:
+- has fewer features
+- has fewer options
+- has fewer developers
+
+*lifter* needs only itself (binary) and the `lifter.config` file to 
+work.
