@@ -2,12 +2,12 @@ use std::io::{Read, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use log::*;
 use scraper::{Html, Selector};
-use std::path::Path;
 use std::collections::HashMap;
+use std::path::Path;
 use strfmt::strfmt;
 
 /// This pattern matches the format of how filenames of binaries are
@@ -63,10 +63,9 @@ struct Hit {
 
 fn read_section_into_map(conf: &tini::Ini, section: &str) -> HashMap<String, String> {
     let mut tmp = HashMap::new();
-    conf.section_iter(&section)
-        .for_each(|(k, v)| {
-            tmp.insert(k.clone(), v.clone());
-        });
+    conf.section_iter(&section).for_each(|(k, v)| {
+        tmp.insert(k.clone(), v.clone());
+    });
     tmp
 }
 
@@ -75,7 +74,7 @@ type Templates = HashMap<String, HashMap<String, String>>;
 /// Mutate the config to replace a template with the template values.
 ///
 /// If `template` is specified in a section, we must use it! Look up
-/// the fields that are defined in a template with that name, and 
+/// the fields that are defined in a template with that name, and
 /// insert those fields into the `Config` object that represents
 /// that section.
 ///
@@ -84,20 +83,21 @@ type Templates = HashMap<String, HashMap<String, String>>;
 /// format. Any fields defined in the *section* can be substituted
 /// into each template item if the `{name}` of that item is used.
 fn insert_fields_from_template(
-    cf: &mut Config, 
+    cf: &mut Config,
     templates: &Templates,
-    values: &HashMap<String, String>) -> Result<()> {
-
+    values: &HashMap<String, String>,
+) -> Result<()> {
     if let Some(t) = values.get("template") {
         debug!("Config has a template: {:?}", &values);
         cf.template = t.clone();
-        let template_fields = templates
-            .get(&cf.template)
-            .ok_or_else(|| anyhow!(
-                    "The specified template '{}' was not found in the \
+        let template_fields = templates.get(&cf.template).ok_or_else(|| {
+            anyhow!(
+                "The specified template '{}' was not found in the \
                     list of available templates: {:?}",
-                    &t, templates.keys().collect::<Vec<_>>()
-                    ))?;
+                &t,
+                templates.keys().collect::<Vec<_>>()
+            )
+        })?;
 
         if let Some(value) = template_fields.get("page_url") {
             cf.page_url = strfmt(value, values)?;
@@ -114,17 +114,16 @@ fn insert_fields_from_template(
     Ok(())
 }
 
-
 pub fn run_section(
     section: &str,
-    templates: &Templates, 
+    templates: &Templates,
     conf: &tini::Ini,
     filename: &str,
     output_dir: &Path,
 ) -> Result<()> {
     let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
-    insert_fields_from_template(&mut cf, templates, &tmp)?; 
+    insert_fields_from_template(&mut cf, templates, &tmp)?;
 
     // First get the project - required
     match tmp.get("page_url") {
@@ -134,11 +133,12 @@ pub fn run_section(
                 return {
                     warn!(
                         "[{}] Section {} is missing required field \
-                         \"page_url\"", section, section);
+                         \"page_url\"",
+                        section, section
+                    );
                     Ok(())
                 };
             }
-
         }
     };
     debug!("[{}] Processing: {}", section, &cf.page_url);
@@ -155,11 +155,12 @@ pub fn run_section(
         cf.version_tag = Some(strfmt(value, &tmp)?);
     };
 
-    cf.target_filename_to_extract_from_archive = if let Some(value) = tmp.get("target_filename_to_extract_from_archive") {
-        Some(strfmt(value, &tmp)?)
-    } else {
-        Some(section.to_owned())
-    };
+    cf.target_filename_to_extract_from_archive =
+        if let Some(value) = tmp.get("target_filename_to_extract_from_archive") {
+            Some(strfmt(value, &tmp)?)
+        } else {
+            Some(section.to_owned())
+        };
 
     if let Some(value) = tmp.get("version") {
         cf.version = Some(strfmt(value, &tmp)?);
@@ -189,7 +190,10 @@ pub fn run_section(
             debug!("[{}] Updated config file.", section);
         }
     } else {
-        info!("[{}] Target {} exists, skipping.", section, &cf.target_filename);
+        info!(
+            "[{}] Target {} exists, skipping.",
+            section, &cf.target_filename
+        );
     }
     Ok(())
 }
@@ -218,7 +222,7 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
     let existing_version = conf.version.as_ref().unwrap();
     if target_file_already_exists(&conf) && &hit.version <= existing_version {
         info!(
-            "[{}] Found version is not newer: {}; Skipping.", 
+            "[{}] Found version is not newer: {}; Skipping.",
             section, &hit.version
         );
         return Ok(None);
@@ -244,16 +248,23 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
             // the download is a binary.
             if !suffix.contains('.') {
                 // This will be treated as the binary
-                debug!("[{}] Returning empty string as ext {}", section, &download_url);
+                debug!(
+                    "[{}] Returning empty string as ext {}",
+                    section, &download_url
+                );
                 ""
             } else {
-                warn!("[{}] Failed to match known file extensions. Skipping.",
-                    section);
+                warn!(
+                    "[{}] Failed to match known file extensions. Skipping.",
+                    section
+                );
                 return Ok(None);
             }
         } else {
-            warn!("[{}] Failed to match known file extensions. Skipping.",
-                section);
+            warn!(
+                "[{}] Failed to match known file extensions. Skipping.",
+                section
+            );
             return Ok(None);
         }
     };
@@ -276,7 +287,10 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
         // let outfilename = od.push(std::path::Path::new(&fname));
         let desired_filename = conf.desired_filename.as_ref().unwrap();
         let mut output = std::fs::File::create(&desired_filename)?;
-        info!("[{}] Saving {} to {}", section, &download_url, desired_filename);
+        info!(
+            "[{}] Saving {} to {}",
+            section, &download_url, desired_filename
+        );
         output.write_all(&buf)?;
     };
 
@@ -310,12 +324,12 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
 /// posix; on Windows it does nothing.
 #[cfg(target_family = "unix")]
 fn set_executable(filename: &str) -> Result<()> {
-        let mut perms = std::fs::metadata(&filename)?.permissions();
-        if perms.mode() & 0o111 == 0 {
-            debug!("File {} is not yet executable, setting bits.", filename);
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&filename, perms)?;
-        }
+    let mut perms = std::fs::metadata(&filename)?.permissions();
+    if perms.mode() & 0o111 == 0 {
+        debug!("File {} is not yet executable, setting bits.", filename);
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&filename, perms)?;
+    }
     Ok(())
 }
 #[cfg(not(target_family = "unix"))]
@@ -363,7 +377,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
                 warn!(
                     "[{}] Download link {} was found but failed to match version \
                      tag \"{}\"",
-                    section, 
+                    section,
                     &download_url,
                     conf.version_tag.as_ref().unwrap()
                 );
