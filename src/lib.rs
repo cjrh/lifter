@@ -9,6 +9,7 @@ use scraper::{Html, Selector};
 use std::collections::HashMap;
 use std::path::Path;
 use strfmt::strfmt;
+use url::Url;
 
 /// This pattern matches the format of how filenames of binaries are
 /// usually written out on github. It will match things like:
@@ -242,6 +243,10 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
             ".zip"
         } else if download_url.ends_with(".exe") {
             ".exe"
+        } else if download_url.ends_with(".com") {
+            ".com"
+        } else if download_url.ends_with(".appimage") {
+            ".appimage"
         } else if let Some(suffix) = slice_from_end(&download_url, 8) {
             // Look at the last 8 chars of the url -> if there's no dot, that
             // probably means no file extension is present, which likely means that
@@ -279,7 +284,7 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
         extract_target_from_zipfile(&mut buf, &conf)?;
     } else if ext == ".tar.gz" {
         extract_target_from_tarfile(&mut buf, &conf);
-    } else if vec![".exe", ""].contains(&ext) {
+    } else if vec![".exe", "", ".com", ".appimage"].contains(&ext) {
         // Windows executables are not compressed, so we only need to
         // handle renames, if the option is given.
         // let fname = conf.desired_filename.clone().unwrap();
@@ -358,7 +363,24 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
     for story in fragment.select(&stories) {
         if let Some(href) = &story.value().attr("href") {
             // This is the download target in the matched link
-            let download_url = format!("https://github.com{}", &href);
+            let download_url = if href.starts_with("http") {
+                // Absolute path
+                href.to_string()
+            } else if href.starts_with('/') || href.starts_with("../") {
+                // Relative to domain
+                let mut u = Url::parse(url)?;
+                u.set_query(None);
+                u.path_segments_mut().unwrap().clear();
+                format!("{}", u.join(href)?)
+            } else {
+                // Relative to page url
+                let mut u = Url::parse(url)?;
+                u.set_query(None);
+                //u.path_segments_mut().unwrap().clear();
+                format!("{}", u.join(href)?)
+            };
+
+            // let download_url = format!("https://github.com{}", &href);
             debug!("[{}] download_url: {}", section, &download_url);
 
             if !re_pat.is_match(&href) {
