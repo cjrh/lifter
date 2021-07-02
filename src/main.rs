@@ -18,9 +18,16 @@ struct Args {
     ts: Option<stderrlog::Timestamp>,
     /// Verbose mode (-v, -vv, -vvv, etc)
     #[structopt(parse(from_os_str), short = "o", long = "output-dir")]
+    // TODO: should use XDG_CONFIG style locations for config
+    /// Output directory. By default, the same directory
+    /// that the lifter binary is in.
     output_dir: Option<std::path::PathBuf>,
+    /// The config file to use for the download definitions
     #[structopt(short = "c", long = "config-file", default_value = "lifter.config")]
     configfile: String,
+    /// Only run these names. Comma separated.
+    #[structopt(short = "f", long = "filter")]
+    filter: Option<String>,
 }
 
 #[paw::main]
@@ -44,6 +51,9 @@ fn main(args: Args) -> Result<()> {
     let current_dir = std::env::current_dir()?;
     let output_dir = args.output_dir.or(Some(current_dir)).unwrap();
 
+    let filters = args.filter.or_else(|| Some("".to_string())).unwrap();
+    let filters = filters.split(',').map(|s| s.trim()).collect::<Vec<_>>();
+
     // One of the sections in the .ini file could be a group of
     // templates. A template is a collection of fields with
     // default values. A "real" (non-template) section can
@@ -65,6 +75,7 @@ fn main(args: Args) -> Result<()> {
             // This inner map (inside a particular template)
             // will store each of the fields and values
             // for that template.
+            debug!("Processing template: {}", name);
             let mut inner_map = HashMap::new();
             seciter.for_each(|(field, value)| {
                 inner_map.insert(field.clone(), value.clone());
@@ -76,8 +87,14 @@ fn main(args: Args) -> Result<()> {
             );
         } else {
             // This is not a template so move it into
-            // the "real" sections list.
-            sections.push((name.clone(), seciter));
+            // the "real" sections list; but, only if it is not
+            // being filtered out.
+            //
+            let included = filters.is_empty() || filters.iter().any(|f| name.contains(f));
+            if included {
+                debug!("Processing section: {}", name);
+                sections.push((name.clone(), seciter));
+            };
         }
     });
     trace!("Detected templates: {:?}", templates);
