@@ -3,6 +3,14 @@
 *lifter* is a CLI tool for downloading single-file executables
 from sites like Github that make them available.
 
+Nearly all projects that make CLI tools, like say _ripgrep_,
+put those binary artifacts in Github releases; but then we
+have to wait until some kind soul packages those binaries
+into various OS distro package managers so that we can 
+get them via _apt_ or _yum_ or _chocolatey_.  No more
+waiting! _lifter_ will download directly from the 
+Github Releases page, if there is a new version released.
+
 ```
 $ dictomatic lifter
 lifter  noun    a thief who steals goods that are in a store
@@ -61,7 +69,8 @@ $ ls -l | rg rg
 ```
 
 Unlike most package managers like *apt*, *scoop*, *brew*, *chocolatey*
-and many others, *lifter* can download binaries for multiple operating
+and many others that focus on a single operating system, *lifter* can 
+download binaries for multiple operating
 systems and simply place those in a directory. I regularly work on
 computers with different operating systems and I like my tools to travel
 with me. By merely copying (or syncing) my "binaries" directory, I have
@@ -73,8 +82,8 @@ OS-specific package manager will be required.
 
 ## Usage
 
-There is a configuration file, `lifter.config` that lets you specify which
-files you want, and from where. *lifter* will keep track of the most recent
+There is a sample configuration file, `lifter.config` that lets you specify which
+applications you want, and from where. *lifter* will keep track of the most recent
 version, so it is cheap to rerun if nothing's changed.
 
 This repo contains an example `lifter.config` file that you can use as a
@@ -85,12 +94,19 @@ rustlang single-file-executable programs, like
 [starship](https://github.com/starship/starship),
 and many others.
 
+*lifter* works with other sites besides Github. The sample `lifter.config`
+includes a definition for downloading the amazing _redbean_ binary
+from @jart's site `https://justine.lol/redbean/`. You should check 
+out that project, it's wild.
+
 ## Details
 
 I said that *lifter* is for fetch CLI binaries. That's what I'm *using* it
 for, but it's more than that. It's an engine for downloading things from
-web pages. There is a declarative mechanism for specifying how to find 
-the item on a page.
+web pages. It works like a web scraper.  There is a declarative mechanism 
+for specifying how to find the download item on a page. You do have to
+do a bit of work to figure out the right CSS to target the download
+link correctly.
 
 Let's look at the ripgrep configuration entry:
 
