@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 
@@ -237,6 +237,8 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
             .any(|ext| download_url.ends_with(ext))
         {
             ".tar.gz"
+        } else if download_url.ends_with(".gz") {
+            ".gz"
         } else if download_url.ends_with(".tar.xz") {
             ".tar.xz"
         } else if download_url.ends_with(".zip") {
@@ -284,6 +286,8 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option
         extract_target_from_zipfile(&mut buf, &conf)?;
     } else if ext == ".tar.gz" {
         extract_target_from_tarfile(&mut buf, &conf);
+    } else if ext == ".gz" {
+        extract_target_from_gzfile(&mut buf, &conf);
     } else if vec![".exe", "", ".com", ".appimage"].contains(&ext) {
         // Windows executables are not compressed, so we only need to
         // handle renames, if the option is given.
@@ -464,6 +468,26 @@ fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> Result<(
     );
 
     Ok(())
+}
+
+fn extract_target_from_gzfile(compressed: &mut [u8], conf: &Config) {
+    let mut cbuf = std::io::Cursor::new(compressed);
+    let mut archive = flate2::read::GzDecoder::new(&mut cbuf);
+    // let mut archive = tar::Archive::new(gzip_archive);
+
+    let target_filename = conf
+        .target_filename_to_extract_from_archive
+        .as_ref()
+        .expect(
+            "To extract from an archive, a target filename must be supplied using the \
+        parameter \"target_filename_to_extract_from_archive\" in the config file.",
+        );
+
+    let mut buf = vec![];
+    archive.read_to_end(&mut buf).unwrap();
+    let mut file = std::fs::File::create(target_filename).unwrap();
+    file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    file.write_all(&buf).unwrap();
 }
 
 fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
