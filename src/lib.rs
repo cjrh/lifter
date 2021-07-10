@@ -1,13 +1,13 @@
 use std::io::{Read, Seek, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use log::*;
 use scraper::{Html, Selector};
-use std::collections::HashMap;
-use std::path::Path;
 use strfmt::strfmt;
 use url::Url;
 
@@ -120,7 +120,6 @@ pub fn run_section(
     templates: &Templates,
     conf: &tini::Ini,
     filename: &str,
-    output_dir: &Path,
 ) -> Result<()> {
     let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
@@ -174,7 +173,7 @@ pub fn run_section(
     };
 
     if !Path::new(&cf.target_filename).exists() {
-        if let Some(new_version) = process(section, &mut cf, output_dir)? {
+        if let Some(new_version) = process(section, &mut cf)? {
             // New version, must update the version number in the
             // config file.
             info!(
@@ -211,7 +210,7 @@ fn target_file_already_exists(conf: &Config) -> bool {
     Path::new(&filename_to_check).exists()
 }
 
-fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Option<String>> {
+fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
     let url = &conf.page_url;
 
     let parse_result = parse_html_page(section, &conf, url)?;
