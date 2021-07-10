@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::io::{Read, Seek, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
