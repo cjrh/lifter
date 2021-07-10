@@ -17,11 +17,11 @@ struct Args {
     #[structopt(short = "t", long = "timestamp")]
     ts: Option<stderrlog::Timestamp>,
     /// Verbose mode (-v, -vv, -vvv, etc)
-    #[structopt(parse(from_os_str), short = "o", long = "output-dir")]
+    #[structopt(parse(from_os_str), short = "w", long = "working-dir")]
     // TODO: should use XDG_CONFIG style locations for config
     /// Output directory. By default, the same directory
     /// that the lifter binary is in.
-    output_dir: Option<std::path::PathBuf>,
+    working_dir: Option<std::path::PathBuf>,
     /// The config file to use for the download definitions
     #[structopt(short = "c", long = "config-file", default_value = "lifter.config")]
     configfile: String,
@@ -49,7 +49,10 @@ fn main(args: Args) -> Result<()> {
     let conf = tini::Ini::from_file(&filename)?;
     let sections_raw = conf.iter().collect_vec();
     let current_dir = std::env::current_dir()?;
-    let output_dir = args.output_dir.or(Some(current_dir)).unwrap();
+    // let root = std::path::Path::new("/");
+    // let exe_dir = std::env::current_exe()?.parent().or(Some(root)).unwrap();
+    let working_dir = args.working_dir.or(Some(current_dir)).unwrap();
+    std::env::set_current_dir(working_dir)?;
 
     let filters = args.filter.or_else(|| Some("".to_string())).unwrap();
     let filters = filters.split(',').map(|s| s.trim()).collect::<Vec<_>>();
@@ -100,7 +103,7 @@ fn main(args: Args) -> Result<()> {
     trace!("Detected templates: {:?}", templates);
 
     sections.par_iter().for_each(|(section, _hm)| {
-        match lifter::run_section(section, &templates, &conf, &filename, &output_dir) {
+        match lifter::run_section(section, &templates, &conf, &filename) {
             Ok(_) => (),
             Err(e) => {
                 error!("{}", e);
