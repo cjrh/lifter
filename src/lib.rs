@@ -11,16 +11,6 @@ use scraper::{Html, Selector};
 use strfmt::strfmt;
 use url::Url;
 
-/// This pattern matches the format of how filenames of binaries are
-/// usually written out on github. It will match things like:
-///
-/// lifter-0.13.4-linux-x86_64
-///
-/// The groups will pull out these fields:
-/// binname: "lifter"
-/// version: "0.13.4"
-/// platform: "linux-x86_64"
-
 #[derive(Default, Debug)]
 struct Config {
     template: String,
@@ -28,7 +18,6 @@ struct Config {
     pattern: String,
     version: Option<String>,
     target_platform: Option<String>,
-    target_filename: String,
 
     /// More direct strategy
     /// The HTTP page link that contains the download link
@@ -172,28 +161,18 @@ pub fn run_section(
         cf.target_filename_to_extract_from_archive.clone()
     };
 
-    if !Path::new(&cf.target_filename).exists() {
-        if let Some(new_version) = process(section, &mut cf)? {
-            // New version, must update the version number in the
-            // config file.
-            info!(
-                "[{}] Downloaded new version of {}: {}",
-                section, &cf.target_filename, &new_version
-            );
-            // TODO: actually need a mutex around the following 3 lines.
-            let conf_write = tini::Ini::from_file(&filename).unwrap();
-            conf_write
-                .section(section)
-                .item("version", &new_version)
-                .to_file(&filename)
-                .unwrap();
-            debug!("[{}] Updated config file.", section);
-        }
-    } else {
-        info!(
-            "[{}] Target {} exists, skipping.",
-            section, &cf.target_filename
-        );
+    if let Some(new_version) = process(section, &mut cf)? {
+        // New version, must update the version number in the
+        // config file.
+        info!("[{}] Downloaded new version: {}", section, &new_version);
+        // TODO: actually need a mutex around the following 3 lines.
+        let conf_write = tini::Ini::from_file(&filename).unwrap();
+        conf_write
+            .section(section)
+            .item("version", &new_version)
+            .to_file(&filename)
+            .unwrap();
+        debug!("[{}] Updated config file.", section);
     }
     Ok(())
 }
@@ -383,7 +362,6 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
                 format!("{}", u.join(href)?)
             };
 
-            // let download_url = format!("https://github.com{}", &href);
             debug!("[{}] download_url: {}", section, &download_url);
 
             if !re_pat.is_match(&href) {
@@ -512,13 +490,9 @@ fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
         );
 
         if let Some(p) = &raw_path.file_name() {
-            // println!("path: {:?}", &p);
             if let Some(pm) = p.to_str() {
-                // println!("stem: {:?}", &pm);
                 if pm == target_filename {
                     debug!("tar.gz, Got a match: {}", &pm);
-                    // println!("We found a match: {}", &pm);
-                    // println!("Raw headers: {:?}", &file.header());
                     file.unpack(&target_filename).unwrap();
                     return;
                 }
@@ -555,13 +529,9 @@ fn extract_target_from_tarxz(compressed: &mut [u8], conf: &Config) {
         );
 
         if let Some(p) = &raw_path.file_name() {
-            // println!("path: {:?}", &p);
             if let Some(pm) = p.to_str() {
-                // println!("stem: {:?}", &pm);
                 if pm == target_filename {
                     debug!("tar.gz, Got a match: {}", &pm);
-                    // println!("We found a match: {}", &pm);
-                    // println!("Raw headers: {:?}", &file.header());
                     file.unpack(&target_filename).unwrap();
                     return;
                 }
