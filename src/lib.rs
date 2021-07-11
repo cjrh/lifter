@@ -308,6 +308,16 @@ fn set_executable(filename: &str) -> Result<()> {
     Ok(())
 }
 
+/// This function parses the target webpage trying to find two things:
+/// 1. The download link for the target binary
+/// 2. The version
+///
+/// To find the download link, we check all links on the page that
+/// match the selector given in `anchor_tag`. There could be many
+/// links (`<a>` tags) that match that anchor tag, and we'll keep
+/// checking all of these until we find one whose "text" value
+/// matches the regex given in the `anchor_text` field. This regex
+/// should be a complete match.
 fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
     debug!("[{}] Fetching page at {}", section, &url);
     let resp = reqwest::blocking::get(url)?;
@@ -323,7 +333,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
         }
     };
     let versions = Selector::parse(conf.version_tag.as_ref().unwrap()).unwrap();
-    let re_pat = regex::Regex::new(&conf.anchor_text)?;
+    let re_pat = regex::Regex::new(format!("^{}$", &conf.anchor_text).as_str())?;
 
     debug!("[{}] Looking for matches...", section);
     for story in fragment.select(&stories) {
@@ -346,12 +356,16 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
                 format!("{}", u.join(href)?)
             };
 
-            debug!("[{}] download_url: {}", section, &download_url);
+            debug!("[{}] possible download_url?: {}", section, &download_url);
 
-            if !re_pat.is_match(&href) {
+            trace!("[{}] inner html: {:?}", section, &story.inner_html());
+            let link_text = &story.text().collect::<Vec<_>>().join(" ");
+            let link_text = link_text.trim();
+            trace!("[{}] tag text: {}", section, link_text);
+            if !re_pat.is_match(&link_text) {
                 continue;
             }
-            debug!("[{}] Found a match for anchor_text", section);
+            debug!("[{}] Found a match for anchor_text: {}", section, link_text);
 
             return if let Some(raw_version) = fragment.select(&versions).next() {
                 let version = raw_version.text().join("");
