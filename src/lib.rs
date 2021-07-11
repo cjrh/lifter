@@ -281,22 +281,6 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
         output.write_all(&buf)?;
     };
 
-    if let Some(desired_filename) = &conf.desired_filename {
-        let extracted_filename = conf
-            .target_filename_to_extract_from_archive
-            .as_ref()
-            .unwrap();
-        if desired_filename != extracted_filename {
-            debug!(
-                "[{}] Extract filename is different to desired, renaming {} \
-                 to {}",
-                section, extracted_filename, desired_filename
-            );
-            // TODO: this must be updated to handle output_dir
-            std::fs::rename(extracted_filename, desired_filename)?;
-        }
-    }
-
     if let Some(filename) = &conf.desired_filename {
         if ext != ".exe" {
             // TODO: this must be updated to handle output_dir
@@ -324,6 +308,16 @@ fn set_executable(filename: &str) -> Result<()> {
     Ok(())
 }
 
+/// This function parses the target webpage trying to find two things:
+/// 1. The download link for the target binary
+/// 2. The version
+///
+/// To find the download link, we check all links on the page that
+/// match the selector given in `anchor_tag`. There could be many
+/// links (`<a>` tags) that match that anchor tag, and we'll keep
+/// checking all of these until we find one whose "text" value
+/// matches the regex given in the `anchor_text` field. This regex
+/// should be a complete match.
 fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
     debug!("[{}] Fetching page at {}", section, &url);
     let resp = reqwest::blocking::get(url)?;
@@ -339,7 +333,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
         }
     };
     let versions = Selector::parse(conf.version_tag.as_ref().unwrap()).unwrap();
-    let re_pat = regex::Regex::new(&conf.anchor_text)?;
+    let re_pat = regex::Regex::new(format!("^{}$", &conf.anchor_text).as_str())?;
 
     debug!("[{}] Looking for matches...", section);
     for story in fragment.select(&stories) {
@@ -362,12 +356,16 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
                 format!("{}", u.join(href)?)
             };
 
-            debug!("[{}] download_url: {}", section, &download_url);
+            debug!("[{}] possible download_url?: {}", section, &download_url);
 
-            if !re_pat.is_match(&href) {
+            trace!("[{}] inner html: {:?}", section, &story.inner_html());
+            let link_text = &story.text().collect::<Vec<_>>().join(" ");
+            let link_text = link_text.trim();
+            trace!("[{}] tag text: {}", section, link_text);
+            if !re_pat.is_match(&link_text) {
                 continue;
             }
-            debug!("[{}] Found a match for anchor_text", section);
+            debug!("[{}] Found a match for anchor_text: {}", section, link_text);
 
             return if let Some(raw_version) = fragment.select(&versions).next() {
                 let version = raw_version.text().join("");
@@ -401,13 +399,13 @@ fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> Result<(
     let mut cbuf = std::io::Cursor::new(compressed);
     let mut archive = zip::ZipArchive::new(&mut cbuf)?;
 
-    let target_filename = conf
-        .target_filename_to_extract_from_archive
-        .as_ref()
-        .expect(
-            "To extract from an archive, a target filename must be supplied using the \
+    let target_filename = conf.desired_filename.as_ref().expect(
+        "To extract from an archive, a target filename must be supplied using the \
         parameter \"target_filename_to_extract_from_archive\" in the config file.",
-        );
+    );
+
+    let re_pat =
+        make_re_target_filename(conf).expect("Failed to construct a regex for the target filename");
 
     for fname in archive
         .file_names()
@@ -428,7 +426,7 @@ fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> Result<(
             &path.file_name().unwrap().to_str().unwrap()
         );
         if let Some(p) = &path.file_name() {
-            if &p.to_string_lossy() == target_filename {
+            if re_pat.is_match(p.to_str().unwrap()) {
                 debug!("zip, Got a match: {}", &fname);
                 let mut rawfile = std::fs::File::create(&target_filename)?;
                 let mut buf = Vec::new();
@@ -450,15 +448,15 @@ fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> Result<(
 fn extract_target_from_gzfile(compressed: &mut [u8], conf: &Config) {
     let mut cbuf = std::io::Cursor::new(compressed);
     let mut archive = flate2::read::GzDecoder::new(&mut cbuf);
-    // let mut archive = tar::Archive::new(gzip_archive);
 
-    let target_filename = conf
-        .target_filename_to_extract_from_archive
-        .as_ref()
-        .expect(
-            "To extract from an archive, a target filename must be supplied using the \
+    let target_filename = conf.desired_filename.as_ref().expect(
+        "To extract from an archive, a target filename must be supplied using the \
         parameter \"target_filename_to_extract_from_archive\" in the config file.",
-        );
+    );
+
+    // If it's only `.gz` (and not `.tar.gz`) then it's a single file, so we don't
+    // worry about trying to match a regex, just save whatever is there into the
+    // `desired_filename`.
 
     let mut buf = vec![];
     archive.read_to_end(&mut buf).unwrap();
@@ -472,13 +470,12 @@ fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
     let gzip_archive = flate2::read::GzDecoder::new(&mut cbuf);
     let mut archive = tar::Archive::new(gzip_archive);
 
-    let target_filename = conf
-        .target_filename_to_extract_from_archive
-        .as_ref()
-        .expect(
-            "To extract from an archive, a target filename must be supplied using the \
+    let target_filename = conf.desired_filename.as_ref().expect(
+        "To extract from an archive, a target filename must be supplied using the \
         parameter \"target_filename_to_extract_from_archive\" in the config file.",
-        );
+    );
+    let re_pat =
+        make_re_target_filename(conf).expect("Failed to construct a regex for the target filename");
 
     for file in archive.entries().unwrap() {
         let mut file = file.unwrap();
@@ -491,7 +488,7 @@ fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
 
         if let Some(p) = &raw_path.file_name() {
             if let Some(pm) = p.to_str() {
-                if pm == target_filename {
+                if re_pat.is_match(pm) {
                     debug!("tar.gz, Got a match: {}", &pm);
                     file.unpack(&target_filename).unwrap();
                     return;
@@ -511,13 +508,13 @@ fn extract_target_from_tarxz(compressed: &mut [u8], conf: &Config) {
     let mut decompressor = xz2::read::XzDecoder::new(cbuf);
     let mut archive = tar::Archive::new(&mut decompressor);
 
-    let target_filename = conf
-        .target_filename_to_extract_from_archive
-        .as_ref()
-        .expect(
-            "To extract from an archive, a target filename must be supplied using the \
+    let target_filename = conf.desired_filename.as_ref().expect(
+        "To extract from an archive, a target filename must be supplied using the \
         parameter \"target_filename_to_extract_from_archive\" in the config file.",
-        );
+    );
+
+    let re_pat =
+        make_re_target_filename(conf).expect("Failed to construct a regex for the target filename");
 
     for file in archive.entries().unwrap() {
         let mut file = file.unwrap();
@@ -530,7 +527,7 @@ fn extract_target_from_tarxz(compressed: &mut [u8], conf: &Config) {
 
         if let Some(p) = &raw_path.file_name() {
             if let Some(pm) = p.to_str() {
-                if pm == target_filename {
+                if re_pat.is_match(pm) {
                     debug!("tar.gz, Got a match: {}", &pm);
                     file.unpack(&target_filename).unwrap();
                     return;
@@ -543,6 +540,19 @@ fn extract_target_from_tarxz(compressed: &mut [u8], conf: &Config) {
         "Failed to find file \"{}\" inside archive",
         &target_filename
     );
+}
+
+fn make_re_target_filename(conf: &Config) -> Result<regex::Regex> {
+    let re = regex::Regex::new(
+        format!(
+            "^{}$",
+            conf.target_filename_to_extract_from_archive
+                .as_ref()
+                .unwrap()
+        )
+        .as_str(),
+    )?;
+    Ok(re)
 }
 
 #[cfg(test)]
