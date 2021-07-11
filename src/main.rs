@@ -45,15 +45,15 @@ fn main(args: Args) -> Result<()> {
         .init()
         .unwrap();
 
-    let filename = args.configfile;
-    let conf = tini::Ini::from_file(&filename)?;
-    let sections_raw = conf.iter().collect_vec();
     let current_dir = std::env::current_dir()?;
-    // let root = std::path::Path::new("/");
-    // let exe_dir = std::env::current_exe()?.parent().or(Some(root)).unwrap();
     let working_dir = args.working_dir.or(Some(current_dir)).unwrap();
     std::env::set_current_dir(working_dir)?;
 
+    let filename = args.configfile;
+    let conf = tini::Ini::from_file(&filename)?;
+    let sections_raw = conf.iter().collect_vec();
+    // let root = std::path::Path::new("/");
+    // let exe_dir = std::env::current_exe()?.parent().or(Some(root)).unwrap();
     let filters = args.filter.or_else(|| Some("".to_string())).unwrap();
     let filters = filters.split(',').map(|s| s.trim()).collect::<Vec<_>>();
 
