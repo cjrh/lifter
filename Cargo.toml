@@ -34,7 +34,7 @@ strfmt = "0.1.6"
 url = "2.2.2"
 
 [dependencies.reqwest]
-version = "0.11.4"
+version = "0.11.5"
 default-features = false
 features = ["blocking", "rustls-tls"]
 
