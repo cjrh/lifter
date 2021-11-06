@@ -368,7 +368,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
             debug!("[{}] Found a match for anchor_text: {}", section, link_text);
 
             return if let Some(raw_version) = fragment.select(&versions).next() {
-                let version = raw_version.text().join("");
+                let version = raw_version.text().join("").trim().to_string();
                 info!("[{}] Found a match on versions tag: {}", section, version);
                 Ok(Some(Hit {
                     version,
