@@ -199,6 +199,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
     };
 
     let existing_version = conf.version.as_ref().unwrap();
+    // TODO: must compare each of the components of the version string as integers.
     if target_file_already_exists(&conf) && &hit.version <= existing_version {
         info!(
             "[{}] Found version is not newer: {}; Skipping.",
@@ -368,7 +369,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
             debug!("[{}] Found a match for anchor_text: {}", section, link_text);
 
             return if let Some(raw_version) = fragment.select(&versions).next() {
-                let version = raw_version.text().join("");
+                let version = raw_version.text().join("").trim().to_string();
                 info!("[{}] Found a match on versions tag: {}", section, version);
                 Ok(Some(Hit {
                     version,
