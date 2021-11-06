@@ -199,6 +199,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
     };
 
     let existing_version = conf.version.as_ref().unwrap();
+    // TODO: must compare each of the components of the version string as integers.
     if target_file_already_exists(&conf) && &hit.version <= existing_version {
         info!(
             "[{}] Found version is not newer: {}; Skipping.",
