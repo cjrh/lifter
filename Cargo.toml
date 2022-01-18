@@ -16,7 +16,7 @@ opt-level = 'z'
 scraper = "0.12.0"
 select = "0.5.0"
 regex = "1.4.6"
-structopt = { version = "0.3.25", features = ["paw"] }
+structopt = { version = "0.3.26", features = ["paw"] }
 paw = "1.0.0"
 zip = "0.5.13"
 compression = "0.1.5"
