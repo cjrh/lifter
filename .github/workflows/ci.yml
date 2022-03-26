@@ -6,6 +6,10 @@ on:
     - master
   schedule:
   - cron: '00 01 * * *'
+
+permissions:
+  contents: read
+
 jobs:
   test:
     name: test
@@ -85,8 +89,16 @@ jobs:
           os: windows-2019
           rust: nightly-x86_64-gnu
     steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@14dc64f30986eaa2ad2dddcec073f5aab18e5a24
+      with:
+        egress-policy: audit
+        allowed-endpoints: >
+          api.github.com:443
+          github.com:443
+
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
 
     - name: Install packages (Ubuntu)
       if: matrix.os == 'ubuntu-18.04'
@@ -97,7 +109,7 @@ jobs:
       run: |
         ci/macos-install-packages
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
       with:
         toolchain: ${{ matrix.rust }}
         profile: minimal
@@ -156,10 +168,15 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-18.04
     steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@9b0655f430fba8c7001d4e38f8d4306db5c6e0ab # v1
+      with:
+        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
       with:
         toolchain: stable
         override: true
@@ -172,10 +189,15 @@ jobs:
     name: Docs
     runs-on: ubuntu-20.04
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9b0655f430fba8c7001d4e38f8d4306db5c6e0ab # v1
+        with:
+          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
         with:
           toolchain: stable
           profile: minimal
