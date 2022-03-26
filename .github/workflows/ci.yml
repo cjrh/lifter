@@ -97,10 +97,8 @@ jobs:
     - name: Harden Runner
       uses: step-security/harden-runner@14dc64f30986eaa2ad2dddcec073f5aab18e5a24
       with:
-        egress-policy: audit
+        egress-policy: block
         allowed-endpoints: >
-          api.github.com:443
-          github.com:443
 
     - name: Checkout repository
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
@@ -177,7 +175,8 @@ jobs:
     - name: Harden Runner
       uses: step-security/harden-runner@9b0655f430fba8c7001d4e38f8d4306db5c6e0ab # v1
       with:
-        egress-policy: audit
+        egress-policy: block
+        allowed-endpoints: >
 
     - name: Checkout repository
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
@@ -195,28 +194,28 @@ jobs:
     name: Docs
     runs-on: ubuntu-20.04
     steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@9b0655f430fba8c7001d4e38f8d4306db5c6e0ab # v1
-        with:
-          egress-policy: block
-          allowed-endpoints: >
-            crates.io:443
-            github.com:443
-            static.crates.io:443
-            static.rust-lang.org:443
+    - name: Harden Runner
+      uses: step-security/harden-runner@9b0655f430fba8c7001d4e38f8d4306db5c6e0ab # v1
+      with:
+        egress-policy: block
+        allowed-endpoints: >
+          crates.io:443
+          github.com:443
+          static.crates.io:443
+          static.rust-lang.org:443
 
-      - name: Checkout repository
-        uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
-      - name: Install Rust
-        uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-      - name: Check documentation
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --document-private-items --workspace
+    - name: Checkout repository
+      uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
+    - name: Install Rust
+      uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+    - name: Check documentation
+      env:
+        RUSTDOCFLAGS: -D warnings
+      run: cargo doc --no-deps --document-private-items --workspace
 
   dependency-scan:
     permissions:
@@ -239,6 +238,7 @@ jobs:
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
       with:
         fetch-depth: 0
+        persist-credentials: false
 
     - name: Run vulnerability scanner in repo mode
       if: github.actor != 'dependabot[bot]'
