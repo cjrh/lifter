@@ -245,6 +245,8 @@ jobs:
         format: 'sarif'
         vuln-type: 'library'
         severity: 'CRITICAL,HIGH'
+        output: 'trivy-results.sarif'
+
 
     - name: Run vulnerability scanner in repo mode
       if: github.actor == 'dependabot[bot]'
