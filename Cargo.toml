@@ -21,7 +21,7 @@ paw = "1.0.0"
 zip = "0.5.13"
 compression = "0.1.5"
 flate2 = "1.0.22"
-tar = "0.4.37"
+tar = "0.4.38"
 toml = "0.5.8"
 tini = "1.2.0"
 stderrlog = "0.5.1"
@@ -34,7 +34,7 @@ strfmt = "0.1.6"
 url = "2.2.2"
 
 [dependencies.reqwest]
-version = "0.11.9"
+version = "0.11.10"
 default-features = false
 features = ["blocking", "rustls-tls"]
 
