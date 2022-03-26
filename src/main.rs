@@ -73,14 +73,14 @@ fn main(args: Args) -> Result<()> {
     let mut templates = HashMap::new();
     // This will hold the "real" sections
     let mut sections = vec![];
-    sections_raw.into_iter().for_each(|(name, seciter)| {
+    sections_raw.into_iter().for_each(|(name, section)| {
         if name.starts_with("template:") {
             // This inner map (inside a particular template)
             // will store each of the fields and values
             // for that template.
             debug!("Processing template: {}", name);
             let mut inner_map = HashMap::new();
-            seciter.for_each(|(field, value)| {
+            section.iter().for_each(|(field, value)| {
                 inner_map.insert(field.clone(), value.clone());
             });
 
@@ -96,7 +96,7 @@ fn main(args: Args) -> Result<()> {
             let included = filters.is_empty() || filters.iter().any(|f| name.contains(f));
             if included {
                 debug!("Processing section: {}", name);
-                sections.push((name.clone(), seciter));
+                sections.push((name.clone(), section));
             };
         }
     });
