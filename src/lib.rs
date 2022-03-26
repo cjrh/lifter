@@ -14,10 +14,7 @@ use url::Url;
 #[derive(Default, Debug)]
 struct Config {
     template: String,
-    project: String,
-    pattern: String,
     version: Option<String>,
-    target_platform: Option<String>,
 
     /// More direct strategy
     /// The HTTP page link that contains the download link
