@@ -16,3 +16,9 @@ updates:
   - dependency-name: regex
     versions:
     - 1.4.3
+
+- package-ecosystem: "github-actions"
+  directory: "/"
+  schedule:
+    interval: daily
+    time: "20:00"
