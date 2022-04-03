@@ -84,14 +84,17 @@ jobs:
         - build: win-gnu
           os: windows-2019
           rust: nightly-x86_64-gnu
-          uses: msys2/setup-msys2@v2
-          with:
-            msystem: MINGW64
-            update: true
-            install: git mingw-w64-x86_64-cc
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
+
+    - name: Upgrade msys if necessary
+      if: matrix.build == 'win-gnu'
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: git mingw-w64-x86_64-cc
 
     - name: Install packages (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
