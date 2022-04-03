@@ -82,8 +82,9 @@ jobs:
           os: windows-2019
           rust: stable
         - build: win-gnu
-          os: windows-latest
+          os: windows-2019
           rust: nightly-x86_64-gnu
+          uses: msys2/setup-msys2@v2
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
