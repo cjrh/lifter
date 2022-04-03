@@ -82,7 +82,7 @@ jobs:
           os: windows-2019
           rust: stable
         - build: win-gnu
-          os: windows-2016
+          os: windows-latest
           rust: nightly-x86_64-gnu
     steps:
     - name: Checkout repository
