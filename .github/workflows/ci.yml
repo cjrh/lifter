@@ -82,8 +82,8 @@ jobs:
           os: windows-2019
           rust: stable
         - build: win-gnu
-          os: windows-2019
-          rust: stable-x86_64-gnu
+          os: windows-2016
+          rust: nightly-x86_64-gnu
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
