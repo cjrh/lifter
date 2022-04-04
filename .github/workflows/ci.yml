@@ -108,6 +108,7 @@ jobs:
           azure.archive.ubuntu.com:443
           api.snapcraft.io:80
           api.snapcraft.io:443
+          static.rust-lang.org:443
 
     - name: Checkout repository
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
