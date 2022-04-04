@@ -49,34 +49,34 @@ jobs:
         - nightly-arm
         - macos
         - win-msvc
-        - win-gnu
+#        - win-gnu
         include:
         - build: pinned
-          os: ubuntu-18.04
-          rust: 1.52.1
+          os: ubuntu-latest
+          rust: 1.59.0
         - build: stable
-          os: ubuntu-18.04
+          os: ubuntu-latest
           rust: stable
         - build: beta
-          os: ubuntu-18.04
+          os: ubuntu-latest
           rust: beta
         - build: nightly
-          os: ubuntu-18.04
+          os: ubuntu-latest
           rust: nightly
         - build: nightly-musl
-          os: ubuntu-18.04
+          os: ubuntu-latest
           rust: nightly
           target: x86_64-unknown-linux-musl
         - build: nightly-32
-          os: ubuntu-18.04
+          os: ubuntu-latest
           rust: nightly
           target: i686-unknown-linux-gnu
         # - build: nightly-mips
-        #   os: ubuntu-18.04
+        #   os: ubuntu-latest
         #   rust: nightly
         #   target: mips64-unknown-linux-gnuabi64
         - build: nightly-arm
-          os: ubuntu-18.04
+          os: ubuntu-latest
           rust: nightly
           # For stripping release binaries:
           # docker run --rm -v $PWD/target:/target:Z \
@@ -86,24 +86,27 @@ jobs:
           target: arm-unknown-linux-gnueabihf
         - build: macos
           os: macos-latest
-          rust: nightly
+          rust: stable
         - build: win-msvc
           os: windows-2019
-          rust: nightly
-        - build: win-gnu
-          os: windows-2019
-          rust: nightly-x86_64-gnu
+          rust: stable
+          # This is currently broken due to ICE, prob too-old mingw 8.1
+#        - build: win-gnu
+#          os: windows-2019
+#          rust: nightly-x86_64-gnu
     steps:
     - name: Harden Runner
       uses: step-security/harden-runner@14dc64f30986eaa2ad2dddcec073f5aab18e5a24
       with:
         egress-policy: block
+        allowed-endpoints: >
+          github.com:443
 
     - name: Checkout repository
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
 
     - name: Install packages (Ubuntu)
-      if: matrix.os == 'ubuntu-18.04'
+      if: matrix.os == 'ubuntu-latest'
       run: |
         ci/ubuntu-install-packages
     - name: Install packages (macOS)
@@ -168,13 +171,15 @@ jobs:
     #     done
   rustfmt:
     name: rustfmt
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-latest
     needs: dependency-scan
     steps:
     - name: Harden Runner
       uses: step-security/harden-runner@9b0655f430fba8c7001d4e38f8d4306db5c6e0ab # v1
       with:
         egress-policy: block
+        allowed-endpoints: >
+          github.com:443
 
     - name: Checkout repository
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
