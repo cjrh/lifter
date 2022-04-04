@@ -111,6 +111,7 @@ jobs:
           static.rust-lang.org:443
           crates.io:443
           static.crates.io:443
+          registry-1.docker.io:443
 
     - name: Checkout repository
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
