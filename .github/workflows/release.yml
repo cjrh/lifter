@@ -21,8 +21,14 @@ on:
     # - ag/work
     tags:
     - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
 jobs:
   create-release:
+    permissions:
+      contents: write  # for actions/create-release to create a release
     name: create-release
     runs-on: ubuntu-latest
     # env:
@@ -32,6 +38,11 @@ jobs:
       upload_url: ${{ steps.release.outputs.upload_url }}
       rg_version: ${{ env.RG_VERSION }}
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9b0655f430fba8c7001d4e38f8d4306db5c6e0ab # v1
+        with:
+          egress-policy: audit
+
       - name: Get the release version from the tag
         shell: bash
         if: env.RG_VERSION == ''
@@ -43,7 +54,7 @@ jobs:
           echo "version is: ${{ env.RG_VERSION }}"
       - name: Create GitHub release
         id: release
-        uses: actions/create-release@v1
+        uses: actions/create-release@0cb9c9b65d5d1901c1f53e5e66eaf4afd303e70e # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -51,6 +62,8 @@ jobs:
           release_name: ${{ env.RG_VERSION }}
 
   build-release:
+    permissions:
+      contents: write  # for actions/upload-release-asset to upload release asset
     name: build-release
     needs: ['create-release']
     runs-on: ${{ matrix.os }}
@@ -96,8 +109,13 @@ jobs:
           target: i686-pc-windows-msvc
 
     steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@9b0655f430fba8c7001d4e38f8d4306db5c6e0ab # v1
+      with:
+        egress-policy: audit
+
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
       with:
         fetch-depth: 1
 
@@ -110,7 +128,7 @@ jobs:
       run: |
         ci/macos-install-packages
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
       with:
         toolchain: ${{ matrix.rust }}
         profile: minimal
@@ -166,7 +184,7 @@ jobs:
           echo "ASSET=$staging.tar.gz" >> $GITHUB_ENV
         fi
     - name: Upload release archive
-      uses: actions/upload-release-asset@v1.0.1
+      uses: actions/upload-release-asset@64e5e85fc528f162d7ba7ce2d15a3bb67efb3d80 # v1.0.1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
