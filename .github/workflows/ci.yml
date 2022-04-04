@@ -40,7 +40,7 @@ jobs:
         - nightly-arm
         - macos
         - win-msvc
-        - win-gnu
+#        - win-gnu
         include:
         - build: pinned
           os: ubuntu-latest
@@ -81,9 +81,10 @@ jobs:
         - build: win-msvc
           os: windows-2019
           rust: stable
-        - build: win-gnu
-          os: windows-2019
-          rust: nightly-x86_64-gnu
+          # This is currently broken due to ICE, prob too-old mingw 8.1
+#        - build: win-gnu
+#          os: windows-2019
+#          rust: nightly-x86_64-gnu
     steps:
     - name: Checkout repository
       uses: actions/checkout@v2
