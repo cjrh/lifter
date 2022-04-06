@@ -82,6 +82,8 @@ OS-specific package manager will be required.
 
 ## Usage
 
+You just run the `lifter` binary, and it'll download the binaries.
+
 There is a sample configuration file, `lifter.config` that lets you specify which
 applications you want, and from where. *lifter* will keep track of the most recent
 version, so it is cheap to rerun if nothing's changed.
@@ -98,6 +100,15 @@ and many others.
 includes a definition for downloading the amazing _redbean_ binary
 from @jart's site `https://justine.lol/redbean/`. You should check 
 out that project, it's wild.
+
+### Automation
+
+You can automate `lifter` using cron. Run `$ crontab -e` and then add:
+
+```
+SHELL=/bin/bash
+24 22 * * * /path/to/lifter -w /path/for/downloads/
+```
 
 ## Details
 
