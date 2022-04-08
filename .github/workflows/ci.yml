@@ -49,34 +49,34 @@ jobs:
         - nightly-arm
         - macos
         - win-msvc
-#        - win-gnu
+        - win-gnu
         include:
         - build: pinned
-          os: ubuntu-latest
+          os: ubuntu-18.04
           rust: 1.59.0
         - build: stable
-          os: ubuntu-latest
+          os: ubuntu-18.04
           rust: stable
         - build: beta
-          os: ubuntu-latest
+          os: ubuntu-18.04
           rust: beta
         - build: nightly
-          os: ubuntu-latest
+          os: ubuntu-18.04
           rust: nightly
         - build: nightly-musl
-          os: ubuntu-latest
+          os: ubuntu-18.04
           rust: nightly
           target: x86_64-unknown-linux-musl
         - build: nightly-32
-          os: ubuntu-latest
+          os: ubuntu-18.04
           rust: nightly
           target: i686-unknown-linux-gnu
         # - build: nightly-mips
-        #   os: ubuntu-latest
+        #   os: ubuntu-18.04
         #   rust: nightly
         #   target: mips64-unknown-linux-gnuabi64
         - build: nightly-arm
-          os: ubuntu-latest
+          os: ubuntu-18.04
           rust: nightly
           # For stripping release binaries:
           # docker run --rm -v $PWD/target:/target:Z \
@@ -91,9 +91,10 @@ jobs:
           os: windows-2019
           rust: stable
           # This is currently broken due to ICE, prob too-old mingw 8.1
-#        - build: win-gnu
-#          os: windows-2019
-#          rust: nightly-x86_64-gnu
+        - build: win-gnu
+          #os: windows-2019
+          os: ubuntu-18.04
+          rust: stable-x86_64-pc-windows-gnu
     steps:
     - name: Harden Runner
       uses: step-security/harden-runner@14dc64f30986eaa2ad2dddcec073f5aab18e5a24
@@ -119,7 +120,7 @@ jobs:
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
 
     - name: Install packages (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.os == 'ubuntu-18.04'
       run: |
         ci/ubuntu-install-packages
     - name: Install packages (macOS)
@@ -184,7 +185,7 @@ jobs:
     #     done
   rustfmt:
     name: rustfmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-18.04
     needs: dependency-scan
     steps:
     - name: Harden Runner
@@ -283,6 +284,6 @@ jobs:
 
     - name: Upload Trivy scan results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@883476649888a9e8e219d5b2e6b789dc024f690c # v1
-      if: always() 
+      if: always()
       with:
         sarif_file: 'trivy-results.sarif'
