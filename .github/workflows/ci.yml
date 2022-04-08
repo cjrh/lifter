@@ -94,7 +94,8 @@ jobs:
         - build: win-gnu
           #os: windows-2019
           os: ubuntu-18.04
-          rust: stable-x86_64-pc-windows-gnu
+          rust: stable
+          target: x86_64-pc-windows-gnu
     steps:
     - name: Harden Runner
       uses: step-security/harden-runner@14dc64f30986eaa2ad2dddcec073f5aab18e5a24
