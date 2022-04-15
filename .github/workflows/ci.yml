@@ -238,6 +238,8 @@ jobs:
 
   dependency-scan:
     permissions:
+      # Needed to upload the results to code-scanning dashboard.
+      security-events: write
       contents: read # for actions/checkout to fetch code
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
