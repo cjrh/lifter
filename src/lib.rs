@@ -215,7 +215,10 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
             ".tar.gz"
         } else if download_url.ends_with(".gz") {
             ".gz"
-        } else if download_url.ends_with(".tar.xz") {
+        } else if vec![".tar.xz", ".txz"]
+            .iter()
+            .any(|ext| download_url.ends_with(ext))
+        {
             ".tar.xz"
         } else if download_url.ends_with(".zip") {
             ".zip"
@@ -225,6 +228,8 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
             ".com"
         } else if download_url.ends_with(".appimage") {
             ".appimage"
+        } else if download_url.ends_with(".AppImage") {
+            ".AppImage"
         } else if let Some(suffix) = slice_from_end(&download_url, 8) {
             // Look at the last 8 chars of the url -> if there's no dot, that
             // probably means no file extension is present, which likely means that
@@ -264,7 +269,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
         extract_target_from_tarfile(&mut buf, &conf);
     } else if ext == ".gz" {
         extract_target_from_gzfile(&mut buf, &conf);
-    } else if vec![".exe", "", ".com", ".appimage"].contains(&ext) {
+    } else if vec![".exe", "", ".com", ".appimage", ".AppImage"].contains(&ext) {
         // Windows executables are not compressed, so we only need to
         // handle renames, if the option is given.
         // let fname = conf.desired_filename.clone().unwrap();
