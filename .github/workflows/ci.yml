@@ -263,7 +263,7 @@ jobs:
 
     - name: Run vulnerability scanner in repo mode
       if: github.actor != 'dependabot[bot]'
-      uses: aquasecurity/trivy-action@d7a51817e8b3f162f53042add238ac1dcc7a8144 # 0.2.2
+      uses: aquasecurity/trivy-action@2b30463ddb3d11724a04e760e020c7d9af24d8b3 # 0.2.2
       with:
         scan-type: 'fs'
         ignore-unfixed: true
@@ -275,7 +275,7 @@ jobs:
 
     - name: Run vulnerability scanner in repo mode
       if: github.actor == 'dependabot[bot]'
-      uses: aquasecurity/trivy-action@d7a51817e8b3f162f53042add238ac1dcc7a8144 # 0.2.2
+      uses: aquasecurity/trivy-action@2b30463ddb3d11724a04e760e020c7d9af24d8b3 # 0.2.2
       with:
         scan-type: 'fs'
         ignore-unfixed: true
