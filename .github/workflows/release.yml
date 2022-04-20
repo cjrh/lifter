@@ -100,11 +100,11 @@ jobs:
           rust: stable
           target: x86_64-pc-windows-msvc
           # This is currently broken due to ICE, prob too-old mingw 8.1
-        - build: win-gnu
+#        - build: win-gnu
 #          os: windows-2019
-          os: ubuntu-18.04
-          rust: stable
-          target: x86_64-pc-windows-gnu
+#          os: ubuntu-18.04
+#          rust: stable
+#          target: x86_64-pc-windows-gnu
         - build: win32-msvc
           os: windows-2019
           rust: stable
