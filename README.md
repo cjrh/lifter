@@ -1,15 +1,23 @@
 # lifter
 
+Would you like to automatically download cool binaries like ripgrep,
+fzf, bat, as soon as a new version is posted on their Github Releases
+pages? And would you like this to work for all websites where
+such binaries are posted, not only Github?
+
 *lifter* is a CLI tool for downloading single-file executables
-from sites like Github that make them available.
+from sites like Github that make them available, *and only downloading
+newer versions when available*.
 
 Nearly all projects that make CLI tools, like say _ripgrep_,
 put those binary artifacts in Github releases; but then we
-have to wait until some kind soul packages those binaries
+have to wait until someone packages those binaries
 into various OS distro package managers so that we can 
 get them via _apt_ or _yum_ or _chocolatey_.  No more
 waiting! _lifter_ will download directly from the 
 Github Releases page, if there is a new version released.
+
+### Why the name?
 
 ```
 $ dictomatic lifter
@@ -17,7 +25,9 @@ lifter  noun    a thief who steals goods that are in a store
 lifter  noun    an athlete who lifts barbells
 ```
 
-Take your pick.
+Take your pick.  (By the way, `dictomatic` is another one of my
+hobby projects, and `lifter` will download that binary for you
+too.)
 
 > :warning: WARNING: This is an *alpha-quality hobby project*. I do use this
 > tool myself, but I started this project mainly to learn rust. While I
