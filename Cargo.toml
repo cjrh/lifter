@@ -29,7 +29,7 @@ log = "0.4.17"
 itertools = "0.10.3"
 anyhow = "1.0.57"
 xz2 = "0.1.6"
-rayon = "1.5.2"
+rayon = "1.5.3"
 strfmt = "0.1.6"
 url = "2.2.2"
 
