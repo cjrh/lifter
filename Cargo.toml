@@ -29,7 +29,7 @@ itertools = "0.10.3"
 anyhow = "1.0.58"
 xz2 = "0.1.7"
 rayon = "1.5.3"
-strfmt = "0.1.6"
+strfmt = "0.2.1"
 url = "2.2.2"
 
 [dependencies.reqwest]
