@@ -129,7 +129,7 @@ jobs:
       run: |
         ci/macos-install-packages
     - name: Install Rust
-      uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
+      uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
       with:
         toolchain: ${{ matrix.rust }}
         profile: minimal
@@ -200,7 +200,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
     - name: Install Rust
-      uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
+      uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
       with:
         toolchain: stable
         override: true
@@ -226,7 +226,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
     - name: Install Rust
-      uses: actions-rs/toolchain@63eb9591781c46a70274cb3ebdf190fce92702e8 # v1
+      uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
       with:
         toolchain: stable
         profile: minimal
