@@ -325,6 +325,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
     debug!("[{}] Fetching page at {}", section, &url);
     let resp = reqwest::blocking::get(url)?;
     let body = resp.text()?;
+    debug!("{}", &body);
 
     debug!("[{}] Setting up parsers", section);
     let fragment = Html::parse_document(&body);
