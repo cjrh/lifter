@@ -57,8 +57,6 @@ fn main(args: Args) -> Result<()> {
     };
     let conf = tini::Ini::from_file(&filename)?;
     let sections_raw = conf.iter().collect_vec();
-    // let root = std::path::Path::new("/");
-    // let exe_dir = std::env::current_exe()?.parent().or(Some(root)).unwrap();
     let filters = args.filter.or_else(|| Some("".to_string())).unwrap();
     let filters = filters.split(',').map(|s| s.trim()).collect::<Vec<_>>();
 
@@ -97,7 +95,6 @@ fn main(args: Args) -> Result<()> {
             // This is not a template so move it into
             // the "real" sections list; but, only if it is not
             // being filtered out.
-            //
             let included = filters.is_empty() || filters.iter().any(|f| name.contains(f));
             if included {
                 debug!("Processing section: {}", name);
