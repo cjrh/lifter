@@ -49,7 +49,11 @@ fn main(args: Args) -> Result<()> {
     let working_dir = args.working_dir.or(Some(current_dir)).unwrap();
     std::env::set_current_dir(working_dir)?;
 
-    let filename = args.configfile;
+    let p = std::path::PathBuf::from(args.configfile);
+    let filename = match p.exists() {
+        true => p.to_string_lossy().to_string(),
+        false => "lifter.ini".to_string(),
+    };
     let conf = tini::Ini::from_file(&filename)?;
     let sections_raw = conf.iter().collect_vec();
     // let root = std::path::Path::new("/");
