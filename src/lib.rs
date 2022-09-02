@@ -3,6 +3,7 @@ use std::io::{Read, Seek, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
@@ -323,7 +324,38 @@ fn set_executable(filename: &str) -> Result<()> {
 /// should be a complete match.
 fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
     debug!("[{}] Fetching page at {}", section, &url);
-    let resp = reqwest::blocking::get(url)?;
+
+    // Retry with backoff
+    let mut attempts_remaining = 10;
+    let resp = loop {
+        if attempts_remaining == 0 {
+            return Err(anyhow!(format!("Failed to download {}", section)));
+        } else {
+            attempts_remaining -= 1;
+        }
+        let resp = reqwest::blocking::get(url)?;
+        let status_code = resp.status().as_u16();
+        debug!("Fetching {section}, status: {status_code}");
+        match status_code {
+            200..=299 => break resp,
+            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status#client_error_responses
+            408 | 425 | 429 | 500 | 502 | 503 | 504 => {
+                let zzz = ((10 - attempts_remaining) * 4).min(60);
+                info!("Got status {status_code} fetching {section}. Sleeping for {zzz} secs...");
+                std::thread::sleep(Duration::from_secs(zzz));
+                continue;
+            }
+            _ => {
+                let body = resp.text()?;
+                let msg = format!(
+                    "Unexpected error fetching {url}. Status {status_code}. \
+                    Body: {body}"
+                );
+                return Err(anyhow!(msg));
+            }
+        };
+    };
+
     let body = resp.text()?;
     debug!("{}", &body);
 

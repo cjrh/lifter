@@ -32,11 +32,12 @@ struct Args {
 
 #[paw::main]
 fn main(args: Args) -> Result<()> {
-    // We're using threads for IO so we can use more than cpu count
+    // We're using threads for IO, so we can use more than cpu count
     rayon::ThreadPoolBuilder::new()
-        .num_threads(16)
+        .num_threads(8)
         .build_global()
         .unwrap();
+
     stderrlog::new()
         .module(module_path!())
         .quiet(args.quiet)
