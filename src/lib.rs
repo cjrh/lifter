@@ -36,8 +36,6 @@ struct Config {
 impl Config {
     fn new() -> Config {
         Config {
-            // TODO: the latest should be the default here.
-            template: String::from("https://github.com/{project}/releases"),
             ..Default::default()
         }
     }
