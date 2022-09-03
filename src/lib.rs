@@ -48,7 +48,7 @@ struct Hit {
 
 fn read_section_into_map(conf: &tini::Ini, section: &str) -> HashMap<String, String> {
     let mut tmp = HashMap::new();
-    conf.section_iter(&section).for_each(|(k, v)| {
+    conf.section_iter(section).for_each(|(k, v)| {
         tmp.insert(k.clone(), v.clone());
     });
     tmp
@@ -187,7 +187,7 @@ fn target_file_already_exists(conf: &Config) -> bool {
 fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
     let url = &conf.page_url;
 
-    let parse_result = parse_html_page(section, &conf, url)?;
+    let parse_result = parse_html_page(section, conf, url)?;
     let hit = match parse_result {
         Some(hit) => hit,
         None => return Ok(None),
@@ -195,7 +195,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
 
     let existing_version = conf.version.as_ref().unwrap();
     // TODO: must compare each of the components of the version string as integers.
-    if target_file_already_exists(&conf) && &hit.version <= existing_version {
+    if target_file_already_exists(conf) && &hit.version <= existing_version {
         info!(
             "[{}] Found version is not newer: {}; Skipping.",
             section, &hit.version
@@ -228,7 +228,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
             ".appimage"
         } else if download_url.ends_with(".AppImage") {
             ".AppImage"
-        } else if let Some(suffix) = slice_from_end(&download_url, 8) {
+        } else if let Some(suffix) = slice_from_end(download_url, 8) {
             // Look at the last 8 chars of the url -> if there's no dot, that
             // probably means no file extension is present, which likely means that
             // the download is a binary.
@@ -260,13 +260,13 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
     resp.copy_to(&mut buf)?;
 
     if ext == ".tar.xz" {
-        extract_target_from_tarxz(&mut buf, &conf);
+        extract_target_from_tarxz(&mut buf, conf);
     } else if ext == ".zip" {
-        extract_target_from_zipfile(&mut buf, &conf)?;
+        extract_target_from_zipfile(&mut buf, conf)?;
     } else if ext == ".tar.gz" {
-        extract_target_from_tarfile(&mut buf, &conf);
+        extract_target_from_tarfile(&mut buf, conf);
     } else if ext == ".gz" {
-        extract_target_from_gzfile(&mut buf, &conf);
+        extract_target_from_gzfile(&mut buf, conf);
     } else if vec![".exe", "", ".com", ".appimage", ".AppImage"].contains(&ext) {
         // Windows executables are not compressed, so we only need to
         // handle renames, if the option is given.
@@ -285,7 +285,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
     if let Some(filename) = &conf.desired_filename {
         if ext != ".exe" {
             // TODO: this must be updated to handle output_dir
-            set_executable(&filename)?;
+            set_executable(filename)?;
         }
     }
 
@@ -364,7 +364,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
             let link_text = &story.text().collect::<Vec<_>>().join(" ");
             let link_text = link_text.trim();
             trace!("[{}] tag text: {}", section, link_text);
-            if !re_pat.is_match(&link_text) {
+            if !re_pat.is_match(link_text) {
                 continue;
             }
             debug!("[{}] Found a match for anchor_text: {}", section, link_text);

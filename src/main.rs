@@ -46,7 +46,7 @@ fn main(args: Args) -> Result<()> {
         .unwrap();
 
     let current_dir = std::env::current_dir()?;
-    let working_dir = args.working_dir.or(Some(current_dir)).unwrap();
+    let working_dir = args.working_dir.unwrap_or(current_dir);
     std::env::set_current_dir(working_dir)?;
 
     let filename = args.configfile;
