@@ -77,19 +77,23 @@ type Templates = HashMap<String, HashMap<String, String>>;
 /// Let's look at a real example. Here is a template for a "github"
 /// releases page:
 ///
-///     [template:github_release_latest]
-///     page_url = https://github.com/{project}/releases/latest
-///     anchor_tag = html main details a
-///     version_tag = a.Link--muted span.css-truncate.css-truncate-target span.ml-1
+/// ```ini
+/// [template:github_release_latest]
+/// page_url = https://github.com/{project}/releases/latest
+/// anchor_tag = html main details a
+/// version_tag = a.Link--muted span.css-truncate.css-truncate-target span.ml-1
+/// ```
 ///
 /// Here is the entry for ripgrep:
 ///
-///     [ripgrep]
-///     template = github_release_latest
-///     project = BurntSushi/ripgrep
-///     anchor_text = ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
-///     target_filename_to_extract_from_archive = rg
-///     version = 13.0.0
+/// ```ini
+/// [ripgrep]
+/// template = github_release_latest
+/// project = BurntSushi/ripgrep
+/// anchor_text = ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
+/// target_filename_to_extract_from_archive = rg
+/// version = 13.0.0
+/// ```
 ///
 /// This function does the following:
 ///
