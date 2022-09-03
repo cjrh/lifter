@@ -12,6 +12,8 @@ use scraper::{Html, Selector};
 use strfmt::strfmt;
 use url::Url;
 
+/// This struct represents a particular artifact that will
+/// be downloaded.
 #[derive(Default, Debug)]
 struct Config {
     template: String,
@@ -47,6 +49,9 @@ struct Hit {
     download_url: String,
 }
 
+/// Read a section of the config file (ini file) into a hashmap.
+/// This isn't too complicated, pretty much uses the iterator
+/// provided by tini.
 fn read_section_into_map(conf: &tini::Ini, section: &str) -> HashMap<String, String> {
     let mut tmp = HashMap::new();
     conf.section_iter(section).for_each(|(k, v)| {
@@ -68,6 +73,35 @@ type Templates = HashMap<String, HashMap<String, String>>;
 /// also themselves be used as templates using the handlebars
 /// format. Any fields defined in the *section* can be substituted
 /// into each template item if the `{name}` of that item is used.
+///
+/// Let's look at a real example. Here is a template for a "github"
+/// releases page:
+///
+/// ```ini
+/// [template:github_release_latest]
+/// page_url = https://github.com/{project}/releases/latest
+/// anchor_tag = html main details a
+/// version_tag = a.Link--muted span.css-truncate.css-truncate-target span.ml-1
+/// ```
+///
+/// Here is the entry for ripgrep:
+///
+/// ```ini
+/// [ripgrep]
+/// template = github_release_latest
+/// project = BurntSushi/ripgrep
+/// anchor_text = ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
+/// target_filename_to_extract_from_archive = rg
+/// version = 13.0.0
+/// ```
+///
+/// This function does the following:
+///
+/// 1. Add the fields in the template (page_url, anchor_tag, version_tag)
+///    into the ripgrep config hashmap
+/// 2. Sees that the `{project}` template variable appears in the `page_url`
+///    field, and substitutes the value of the actual `project` value
+///    in the ripgrep section.
 fn insert_fields_from_template(
     cf: &mut Config,
     templates: &Templates,
@@ -142,8 +176,17 @@ pub fn run_section(
 
     cf.target_filename_to_extract_from_archive =
         if let Some(value) = tmp.get("target_filename_to_extract_from_archive") {
+            // The target filename parameter is present, so we'll use
+            // that. However, it must also be substituted with the
+            // current vars, in case it contains any template params.
             Some(strfmt(value, &tmp)?)
         } else {
+            // The default filename to look for inside the archive
+            // is the name of the section. For example, if the name
+            // of the section in the config file is `[ripgrep]` then
+            // this is what we'll search for. If instead the filename
+            // inside the archive is `[rg]`, then that will be searched
+            // for.
             Some(section.to_owned())
         };
 
@@ -154,9 +197,19 @@ pub fn run_section(
     cf.desired_filename = if let Some(value) = tmp.get("desired_filename") {
         Some(strfmt(value, &tmp)?)
     } else {
+        // No explicit "desired_filename" given, so we'll use the
+        // target filename as the desired filename. Note that in the
+        // case where no explicit target filename was given, we defaulted
+        // to the section name. So that will flow on to here too.
         cf.target_filename_to_extract_from_archive.clone()
     };
 
+    // Finally time to actually do some processing. Here we call
+    // out to a function, and if we get something back, it means
+    // we found and processed a new version. This section will
+    // then update the config file with the new version.
+    // TODO: would be useful to collect things that changed,
+    //   and what versions they changed from/to.
     if let Some(new_version) = process(section, &mut cf)? {
         // New version, must update the version number in the
         // config file.
