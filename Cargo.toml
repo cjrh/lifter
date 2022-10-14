@@ -17,7 +17,7 @@ select = "0.5.0"
 regex = "1.6.0"
 structopt = { version = "0.3.26", features = ["paw"] }
 paw = "1.0.0"
-zip = "0.6.2"
+zip = "0.6.3"
 compression = "0.1.5"
 flate2 = "1.0.24"
 tar = "0.4.38"
