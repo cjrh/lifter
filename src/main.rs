@@ -34,7 +34,7 @@ struct Args {
 fn main(args: Args) -> Result<()> {
     // We're using threads for IO, so we can use more than cpu count
     rayon::ThreadPoolBuilder::new()
-        .num_threads(8)
+        .num_threads(2)
         .build_global()
         .unwrap();
 
