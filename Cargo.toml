@@ -36,5 +36,5 @@ headless_chrome = {git = "https://github.com/atroche/rust-headless-chrome", feat
 [dependencies.reqwest]
 version = "0.11.12"
 default-features = false
-features = ["blocking", "rustls-tls"]
+features = ["blocking"]
 
