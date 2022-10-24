@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+use headless_chrome::Browser;
 use itertools::Itertools;
 use log::*;
 use scraper::{Html, Selector};
@@ -376,38 +377,46 @@ fn set_executable(filename: &str) -> Result<()> {
 fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
     debug!("[{}] Fetching page at {}", section, &url);
 
+    let browser = Browser::default()?;
+    let tab = browser.wait_for_initial_tab()?;
+
     // Retry with backoff
     let mut attempts_remaining = 10;
-    let resp = loop {
+    let body = loop {
         if attempts_remaining == 0 {
             return Err(anyhow!(format!("Failed to download {}", section)));
         } else {
             attempts_remaining -= 1;
         }
-        let resp = reqwest::blocking::get(url)?;
-        let status_code = resp.status().as_u16();
-        debug!("Fetching {section}, status: {status_code}");
-        match status_code {
-            200..=299 => break resp,
-            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status#client_error_responses
-            408 | 425 | 429 | 500 | 502 | 503 | 504 => {
-                let zzz = ((10 - attempts_remaining) * 4).min(60);
-                info!("Got status {status_code} fetching {section}. Sleeping for {zzz} secs...");
-                std::thread::sleep(Duration::from_secs(zzz));
-                continue;
-            }
-            _ => {
-                let body = resp.text()?;
-                let msg = format!(
-                    "Unexpected error fetching {url}. Status {status_code}. \
-                    Body: {body}"
-                );
-                return Err(anyhow!(msg));
-            }
-        };
-    };
 
-    let body = resp.text()?;
+        if let Err(e) = tab.navigate_to(url)?.wait_until_navigated() {
+            let zzz = ((10 - attempts_remaining) * 4).min(60);
+            info!("Got error {e:?} fetching {section}. Sleeping for {zzz} secs...");
+            std::thread::sleep(Duration::from_secs(zzz));
+            continue;
+        };
+
+        // For diagnostic reasons we might want to see the page.
+        let capture_screenshot = false;
+        if capture_screenshot {
+            let body_height = tab.find_element("body")?.get_box_model()?.height;
+            let body_width = tab.find_element("body")?.get_box_model()?.width;
+            tab.set_bounds(headless_chrome::types::Bounds::Normal {
+                left: Some(0),
+                top: Some(0),
+                width: Some(body_width),
+                height: Some(body_height),
+            })?;
+            let data = tab.capture_screenshot(
+                headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Jpeg,
+                None,
+                None,
+                true,
+            )?;
+            std::fs::write("out.jpg", data)?;
+        }
+        break tab.get_content()?;
+    };
     debug!("{}", &body);
 
     debug!("[{}] Setting up parsers", section);
