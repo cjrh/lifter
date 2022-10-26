@@ -40,6 +40,7 @@ fn main(args: Args) -> Result<()> {
 
     stderrlog::new()
         .module(module_path!())
+        .module("ureq")
         .quiet(args.quiet)
         .verbosity(args.verbose)
         .timestamp(args.ts.unwrap_or(stderrlog::Timestamp::Off))

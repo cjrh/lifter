@@ -16,6 +16,7 @@ use url::Url;
 /// be downloaded.
 #[derive(Default, Debug)]
 struct Config {
+    method: String,
     template: String,
     version: Option<String>,
 
@@ -44,6 +45,7 @@ impl Config {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct Hit {
     version: String,
     download_url: String,
@@ -127,6 +129,9 @@ fn insert_fields_from_template(
         };
         if let Some(value) = template_fields.get("version_tag") {
             cf.version_tag = Some(strfmt(value, values)?);
+        };
+        if let Some(value) = template_fields.get("method") {
+            cf.method = strfmt(value, values)?;
         };
     };
 
@@ -241,7 +246,11 @@ fn target_file_already_exists(conf: &Config) -> bool {
 fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
     let url = &conf.page_url;
 
-    let parse_result = parse_html_page(section, conf, url)?;
+    let parse_result = match conf.method.as_str() {
+        "api_json" => parse_json(section, conf, url)?,
+        _ => parse_html_page(section, conf, url)?,
+    };
+
     let hit = match parse_result {
         Some(hit) => hit,
         None => return Ok(None),
@@ -309,9 +318,12 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
         }
     };
 
-    let mut resp = reqwest::blocking::get(download_url)?;
+    let resp = ureq::get(download_url)
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+            .call()?;
+    let mut reader = resp.into_reader();
     let mut buf: Vec<u8> = Vec::new();
-    resp.copy_to(&mut buf)?;
+    reader.read_to_end(&mut buf)?;
 
     if ext == ".tar.xz" {
         extract_target_from_tarxz(&mut buf, conf);
@@ -363,6 +375,88 @@ fn set_executable(filename: &str) -> Result<()> {
     Ok(())
 }
 
+fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
+    let mut attempts_remaining = 10;
+    let resp = loop {
+        if attempts_remaining == 0 {
+            return Err(anyhow!(format!("Failed to download {}", section)));
+        } else {
+            attempts_remaining -= 1;
+        }
+
+        let resp = ureq::get(url)
+                .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+                .call()?;
+        let status_code = resp.status();
+
+        debug!("Fetching {section}, status: {status_code}");
+        match status_code {
+            200..=299 => break resp,
+            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status#client_error_responses
+            408 | 425 | 429 | 500 | 502 | 503 | 504 => {
+                let zzz = ((10 - attempts_remaining) * 4).min(60);
+                info!("Got status {status_code} fetching {section}. Sleeping for {zzz} secs...");
+                std::thread::sleep(Duration::from_secs(zzz));
+                continue;
+            }
+            _ => {
+                // let body = resp.text()?;
+                let body = resp.into_string()?;
+                let msg = format!(
+                    "Unexpected error fetching {url}. Status {status_code}. \
+                    Body: {body}"
+                );
+                return Err(anyhow!(msg));
+            }
+        };
+    };
+
+    // let body = resp.text()?;
+    let body = resp.into_string()?;
+    debug!("{}", &body);
+    extract_data_from_json(body, conf)
+}
+
+fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Option<Hit>> {
+    // Extract from JSON
+    use jsonpath_rust::JsonPathFinder;
+
+    let vtag = conf.version_tag.clone().unwrap();
+    let finder = JsonPathFinder::from_str(
+        payload.as_ref(),
+        &vtag,
+        // "$.first.second[?(@.active)]",
+    )
+    .unwrap();
+    let item = &finder.find_slice()[0];
+    let item = item.clone().to_data();
+    let version_str = item.as_str().unwrap_or("");
+
+    let finder = JsonPathFinder::from_str(
+        payload.as_ref(),
+        &conf.anchor_tag,
+        // "$.first.second[?(@.active)]",
+    )
+    .unwrap();
+    let urls = finder
+        .find_slice()
+        .iter()
+        .map(|v| v.clone().to_data().as_str().unwrap_or("").to_string())
+        .collect::<Vec<String>>();
+    let re_pat = regex::Regex::new(&conf.anchor_text)?;
+
+    for u in urls {
+        if re_pat.is_match(&u) {
+            return Ok(Some(Hit {
+                version: version_str.to_string(),
+                download_url: u,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
 /// This function parses the target webpage trying to find two things:
 /// 1. The download link for the target binary
 /// 2. The version
@@ -384,8 +478,12 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
         } else {
             attempts_remaining -= 1;
         }
-        let resp = reqwest::blocking::get(url)?;
-        let status_code = resp.status().as_u16();
+
+        let resp = ureq::get(url)
+                .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+                .call()?;
+        let status_code = resp.status();
+
         debug!("Fetching {section}, status: {status_code}");
         match status_code {
             200..=299 => break resp,
@@ -397,7 +495,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
                 continue;
             }
             _ => {
-                let body = resp.text()?;
+                let body = resp.into_string()?;
                 let msg = format!(
                     "Unexpected error fetching {url}. Status {status_code}. \
                     Body: {body}"
@@ -407,7 +505,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
         };
     };
 
-    let body = resp.text()?;
+    let body = resp.into_string()?;
     debug!("{}", &body);
 
     debug!("[{}] Setting up parsers", section);
@@ -553,6 +651,8 @@ fn extract_target_from_gzfile(compressed: &mut [u8], conf: &Config) {
 }
 
 fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
+    // std::fs::write("compressed.tar.gz", &compressed).unwrap();
+
     let mut cbuf = std::io::Cursor::new(compressed);
     let gzip_archive = flate2::read::GzDecoder::new(&mut cbuf);
     let mut archive = tar::Archive::new(gzip_archive);
@@ -649,5 +749,348 @@ mod tests {
     #[test]
     fn test_sqrt() {
         assert!(true);
+    }
+
+    #[test]
+    fn test_extract_data_from_json() -> Result<()> {
+        // This is the payload returned from the github API
+        let payload = r##"
+            {
+              "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/44518686",
+              "assets_url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/44518686/assets",
+              "upload_url": "https://uploads.github.com/repos/BurntSushi/ripgrep/releases/44518686/assets{?name,label}",
+              "html_url": "https://github.com/BurntSushi/ripgrep/releases/tag/13.0.0",
+              "id": 44518686,
+              "author": {
+                "login": "github-actions[bot]",
+                "id": 41898282,
+                "node_id": "MDM6Qm90NDE4OTgyODI=",
+                "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+                "gravatar_id": "",
+                "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+                "html_url": "https://github.com/apps/github-actions",
+                "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+                "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+                "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+                "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+                "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+                "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+                "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+                "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+                "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+                "type": "Bot",
+                "site_admin": false
+              },
+              "node_id": "MDc6UmVsZWFzZTQ0NTE4Njg2",
+              "tag_name": "13.0.0",
+              "target_commitish": "af6b6c543b224d348a8876f0c06245d9ea7929c5",
+              "name": "13.0.0",
+              "draft": false,
+              "prerelease": false,
+              "created_at": "2021-06-12T12:12:24Z",
+              "published_at": "2021-06-12T12:27:16Z",
+              "assets": [
+                {
+                  "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/38486868",
+                  "id": 38486868,
+                  "node_id": "MDEyOlJlbGVhc2VBc3NldDM4NDg2ODY4",
+                  "name": "ripgrep-13.0.0-arm-unknown-linux-gnueabihf.tar.gz",
+                  "label": "",
+                  "uploader": {
+                    "login": "github-actions[bot]",
+                    "id": 41898282,
+                    "node_id": "MDM6Qm90NDE4OTgyODI=",
+                    "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+                    "gravatar_id": "",
+                    "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+                    "html_url": "https://github.com/apps/github-actions",
+                    "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+                    "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+                    "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+                    "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+                    "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+                    "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+                    "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+                    "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+                    "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+                    "type": "Bot",
+                    "site_admin": false
+                  },
+                  "content_type": "application/octet-stream",
+                  "state": "uploaded",
+                  "size": 1763861,
+                  "download_count": 4161,
+                  "created_at": "2021-06-12T12:31:57Z",
+                  "updated_at": "2021-06-12T12:31:58Z",
+                  "browser_download_url": "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-arm-unknown-linux-gnueabihf.tar.gz"
+                },
+                {
+                  "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/38486879",
+                  "id": 38486879,
+                  "node_id": "MDEyOlJlbGVhc2VBc3NldDM4NDg2ODc5",
+                  "name": "ripgrep-13.0.0-i686-pc-windows-msvc.zip",
+                  "label": "",
+                  "uploader": {
+                    "login": "github-actions[bot]",
+                    "id": 41898282,
+                    "node_id": "MDM6Qm90NDE4OTgyODI=",
+                    "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+                    "gravatar_id": "",
+                    "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+                    "html_url": "https://github.com/apps/github-actions",
+                    "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+                    "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+                    "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+                    "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+                    "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+                    "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+                    "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+                    "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+                    "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+                    "type": "Bot",
+                    "site_admin": false
+                  },
+                  "content_type": "application/octet-stream",
+                  "state": "uploaded",
+                  "size": 1591463,
+                  "download_count": 3787,
+                  "created_at": "2021-06-12T12:32:47Z",
+                  "updated_at": "2021-06-12T12:32:48Z",
+                  "browser_download_url": "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-i686-pc-windows-msvc.zip"
+                },
+                {
+                  "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/38486907",
+                  "id": 38486907,
+                  "node_id": "MDEyOlJlbGVhc2VBc3NldDM4NDg2OTA3",
+                  "name": "ripgrep-13.0.0-x86_64-apple-darwin.tar.gz",
+                  "label": "",
+                  "uploader": {
+                    "login": "github-actions[bot]",
+                    "id": 41898282,
+                    "node_id": "MDM6Qm90NDE4OTgyODI=",
+                    "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+                    "gravatar_id": "",
+                    "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+                    "html_url": "https://github.com/apps/github-actions",
+                    "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+                    "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+                    "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+                    "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+                    "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+                    "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+                    "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+                    "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+                    "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+                    "type": "Bot",
+                    "site_admin": false
+                  },
+                  "content_type": "application/octet-stream",
+                  "state": "uploaded",
+                  "size": 1815615,
+                  "download_count": 214176,
+                  "created_at": "2021-06-12T12:35:00Z",
+                  "updated_at": "2021-06-12T12:35:00Z",
+                  "browser_download_url": "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-apple-darwin.tar.gz"
+                },
+                {
+                  "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/38486889",
+                  "id": 38486889,
+                  "node_id": "MDEyOlJlbGVhc2VBc3NldDM4NDg2ODg5",
+                  "name": "ripgrep-13.0.0-x86_64-pc-windows-gnu.zip",
+                  "label": "",
+                  "uploader": {
+                    "login": "github-actions[bot]",
+                    "id": 41898282,
+                    "node_id": "MDM6Qm90NDE4OTgyODI=",
+                    "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+                    "gravatar_id": "",
+                    "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+                    "html_url": "https://github.com/apps/github-actions",
+                    "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+                    "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+                    "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+                    "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+                    "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+                    "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+                    "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+                    "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+                    "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+                    "type": "Bot",
+                    "site_admin": false
+                  },
+                  "content_type": "application/octet-stream",
+                  "state": "uploaded",
+                  "size": 9811405,
+                  "download_count": 11733,
+                  "created_at": "2021-06-12T12:33:25Z",
+                  "updated_at": "2021-06-12T12:33:26Z",
+                  "browser_download_url": "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-pc-windows-gnu.zip"
+                },
+                {
+                  "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/38486875",
+                  "id": 38486875,
+                  "node_id": "MDEyOlJlbGVhc2VBc3NldDM4NDg2ODc1",
+                  "name": "ripgrep-13.0.0-x86_64-pc-windows-msvc.zip",
+                  "label": "",
+                  "uploader": {
+                    "login": "github-actions[bot]",
+                    "id": 41898282,
+                    "node_id": "MDM6Qm90NDE4OTgyODI=",
+                    "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+                    "gravatar_id": "",
+                    "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+                    "html_url": "https://github.com/apps/github-actions",
+                    "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+                    "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+                    "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+                    "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+                    "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+                    "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+                    "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+                    "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+                    "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+                    "type": "Bot",
+                    "site_admin": false
+                  },
+                  "content_type": "application/octet-stream",
+                  "state": "uploaded",
+                  "size": 1734357,
+                  "download_count": 34593,
+                  "created_at": "2021-06-12T12:32:30Z",
+                  "updated_at": "2021-06-12T12:32:30Z",
+                  "browser_download_url": "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-pc-windows-msvc.zip"
+                },
+                {
+                  "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/38486871",
+                  "id": 38486871,
+                  "node_id": "MDEyOlJlbGVhc2VBc3NldDM4NDg2ODcx",
+                  "name": "ripgrep-13.0.0-x86_64-unknown-linux-musl.tar.gz",
+                  "label": "",
+                  "uploader": {
+                    "login": "github-actions[bot]",
+                    "id": 41898282,
+                    "node_id": "MDM6Qm90NDE4OTgyODI=",
+                    "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+                    "gravatar_id": "",
+                    "url": "https://api.github.com/users/github-actions%5Bbot%5D",
+                    "html_url": "https://github.com/apps/github-actions",
+                    "followers_url": "https://api.github.com/users/github-actions%5Bbot%5D/followers",
+                    "following_url": "https://api.github.com/users/github-actions%5Bbot%5D/following{/other_user}",
+                    "gists_url": "https://api.github.com/users/github-actions%5Bbot%5D/gists{/gist_id}",
+                    "starred_url": "https://api.github.com/users/github-actions%5Bbot%5D/starred{/owner}{/repo}",
+                    "subscriptions_url": "https://api.github.com/users/github-actions%5Bbot%5D/subscriptions",
+                    "organizations_url": "https://api.github.com/users/github-actions%5Bbot%5D/orgs",
+                    "repos_url": "https://api.github.com/users/github-actions%5Bbot%5D/repos",
+                    "events_url": "https://api.github.com/users/github-actions%5Bbot%5D/events{/privacy}",
+                    "received_events_url": "https://api.github.com/users/github-actions%5Bbot%5D/received_events",
+                    "type": "Bot",
+                    "site_admin": false
+                  },
+                  "content_type": "application/octet-stream",
+                  "state": "uploaded",
+                  "size": 2109801,
+                  "download_count": 302481,
+                  "created_at": "2021-06-12T12:32:02Z",
+                  "updated_at": "2021-06-12T12:32:03Z",
+                  "browser_download_url": "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-unknown-linux-musl.tar.gz"
+                },
+                {
+                  "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/38493219",
+                  "id": 38493219,
+                  "node_id": "MDEyOlJlbGVhc2VBc3NldDM4NDkzMjE5",
+                  "name": "ripgrep_13.0.0_amd64.deb",
+                  "label": null,
+                  "uploader": {
+                    "login": "BurntSushi",
+                    "id": 456674,
+                    "node_id": "MDQ6VXNlcjQ1NjY3NA==",
+                    "avatar_url": "https://avatars.githubusercontent.com/u/456674?v=4",
+                    "gravatar_id": "",
+                    "url": "https://api.github.com/users/BurntSushi",
+                    "html_url": "https://github.com/BurntSushi",
+                    "followers_url": "https://api.github.com/users/BurntSushi/followers",
+                    "following_url": "https://api.github.com/users/BurntSushi/following{/other_user}",
+                    "gists_url": "https://api.github.com/users/BurntSushi/gists{/gist_id}",
+                    "starred_url": "https://api.github.com/users/BurntSushi/starred{/owner}{/repo}",
+                    "subscriptions_url": "https://api.github.com/users/BurntSushi/subscriptions",
+                    "organizations_url": "https://api.github.com/users/BurntSushi/orgs",
+                    "repos_url": "https://api.github.com/users/BurntSushi/repos",
+                    "events_url": "https://api.github.com/users/BurntSushi/events{/privacy}",
+                    "received_events_url": "https://api.github.com/users/BurntSushi/received_events",
+                    "type": "User",
+                    "site_admin": false
+                  },
+                  "content_type": "application/vnd.debian.binary-package",
+                  "state": "uploaded",
+                  "size": 1574096,
+                  "download_count": 84528,
+                  "created_at": "2021-06-12T17:36:20Z",
+                  "updated_at": "2021-06-12T17:36:21Z",
+                  "browser_download_url": "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep_13.0.0_amd64.deb"
+                }
+              ],
+              "tarball_url": "https://api.github.com/repos/BurntSushi/ripgrep/tarball/13.0.0",
+              "zipball_url": "https://api.github.com/repos/BurntSushi/ripgrep/zipball/13.0.0",
+              "body": "ripgrep 13 is a new major version release of ripgrep that primarily contains\r\nbug fixes, some performance improvements and a few minor breaking changes.\r\nThere is also a fix for a security vulnerability on Windows\r\n([CVE-2021-3013](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-3013)).\r\n\r\nIn case you haven't heard of it before, ripgrep is a line-oriented search\r\ntool that recursively searches the current directory for a regex pattern. By\r\ndefault, ripgrep will respect gitignore rules and automatically skip hidden\r\nfiles/directories and binary files.\r\n\r\nSome highlights:\r\n\r\nA new short flag, `-.`, has been added. It is an alias for the `--hidden` flag,\r\nwhich instructs ripgrep to search hidden files and directories.\r\n\r\nripgrep is now using a new\r\n[vectorized implementation of `memmem`](https://github.com/BurntSushi/memchr/pull/82),\r\nwhich accelerates many common searches. If you notice any performance\r\nregressions (or major improvements), I'd love to hear about them through an\r\nissue report!\r\n\r\nAlso, for Windows users targeting MSVC, Cargo will now build fully static\r\nexecutables of ripgrep. The release binaries for ripgrep 13 have been compiled\r\nusing this configuration.\r\n\r\n**BREAKING CHANGES**:\r\n\r\n**Binary detection output has changed slightly.**\r\n\r\nIn this release, a small tweak has been made to the output format when a binary\r\nfile is detected. Previously, it looked like this:\r\n\r\n```\r\nBinary file FOO matches (found \"\\0\" byte around offset XXX)\r\n```\r\n\r\nNow it looks like this:\r\n\r\n```\r\nFOO: binary file matches (found \"\\0\" byte around offset XXX)\r\n```\r\n\r\n**vimgrep output in multi-line now only prints the first line for each match.**\r\n\r\nSee [issue 1866](https://github.com/BurntSushi/ripgrep/issues/1866) for more\r\ndiscussion on this. Previously, every line in a match was duplicated, even\r\nwhen it spanned multiple lines. There are no changes to vimgrep output when\r\nmulti-line mode is disabled.\r\n\r\n**In multi-line mode, --count is now equivalent to --count-matches.**\r\n\r\nThis appears to match how `pcre2grep` implements `--count`. Previously, ripgrep\r\nwould produce outright incorrect counts. Another alternative would be to simply\r\ncount the number of lines---even if it's more than the number of matches---but\r\nthat seems highly unintuitive.\r\n\r\n**FULL LIST OF FIXES AND IMPROVEMENTS:**\r\n\r\nSecurity fixes:\r\n\r\n* [CVE-2021-3013](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-3013):\r\n  Fixes a security hole on Windows where running ripgrep with either the\r\n  `-z/--search-zip` or `--pre` flags can result in running arbitrary\r\n  executables from the current directory.\r\n* [VULN #1773](https://github.com/BurntSushi/ripgrep/issues/1773):\r\n  This is the public facing issue tracking CVE-2021-3013. ripgrep's README\r\n  now contains a section describing how to report a vulnerability.\r\n\r\nPerformance improvements:\r\n\r\n* [PERF #1657](https://github.com/BurntSushi/ripgrep/discussions/1657):\r\n  Check if a file should be ignored first before issuing stat calls.\r\n* [PERF memchr#82](https://github.com/BurntSushi/memchr/pull/82):\r\n  ripgrep now uses a new vectorized implementation of `memmem`.\r\n\r\nFeature enhancements:\r\n\r\n* Added or improved file type filtering for ASP, Bazel, dvc, FlatBuffers,\r\n  Futhark, minified files, Mint, pofiles (from GNU gettext) Racket, Red, Ruby,\r\n  VCL, Yang.\r\n* [FEATURE #1404](https://github.com/BurntSushi/ripgrep/pull/1404):\r\n  ripgrep now prints a warning if nothing is searched.\r\n* [FEATURE #1613](https://github.com/BurntSushi/ripgrep/pull/1613):\r\n  Cargo will now produce static executables on Windows when using MSVC.\r\n* [FEATURE #1680](https://github.com/BurntSushi/ripgrep/pull/1680):\r\n  Add `-.` as a short flag alias for `--hidden`.\r\n* [FEATURE #1842](https://github.com/BurntSushi/ripgrep/issues/1842):\r\n  Add `--field-{context,match}-separator` for customizing field delimiters.\r\n* [FEATURE #1856](https://github.com/BurntSushi/ripgrep/pull/1856):\r\n  The README now links to a\r\n  [Spanish translation](https://github.com/UltiRequiem/traducciones/tree/master/ripgrep).\r\n\r\nBug fixes:\r\n\r\n* [BUG #1277](https://github.com/BurntSushi/ripgrep/issues/1277):\r\n  Document cygwin path translation behavior in the FAQ.\r\n* [BUG #1739](https://github.com/BurntSushi/ripgrep/issues/1739):\r\n  Fix bug where replacements were buggy if the regex matched a line terminator.\r\n* [BUG #1311](https://github.com/BurntSushi/ripgrep/issues/1311):\r\n  Fix multi-line bug where a search & replace for `\\n` didn't work as expected.\r\n* [BUG #1401](https://github.com/BurntSushi/ripgrep/issues/1401):\r\n  Fix buggy interaction between PCRE2 look-around and `-o/--only-matching`.\r\n* [BUG #1412](https://github.com/BurntSushi/ripgrep/issues/1412):\r\n  Fix multi-line bug with searches using look-around past matching lines.\r\n* [BUG #1577](https://github.com/BurntSushi/ripgrep/issues/1577):\r\n  Fish shell completions will continue to be auto-generated.\r\n* [BUG #1642](https://github.com/BurntSushi/ripgrep/issues/1642):\r\n  Fixes a bug where using `-m` and `-A` printed more matches than the limit.\r\n* [BUG #1703](https://github.com/BurntSushi/ripgrep/issues/1703):\r\n  Clarify the function of `-u/--unrestricted`.\r\n* [BUG #1708](https://github.com/BurntSushi/ripgrep/issues/1708):\r\n  Clarify how `-S/--smart-case` works.\r\n* [BUG #1730](https://github.com/BurntSushi/ripgrep/issues/1730):\r\n  Clarify that CLI invocation must always be valid, regardless of config file.\r\n* [BUG #1741](https://github.com/BurntSushi/ripgrep/issues/1741):\r\n  Fix stdin detection when using PowerShell in UNIX environments.\r\n* [BUG #1756](https://github.com/BurntSushi/ripgrep/pull/1756):\r\n  Fix bug where `foo/**` would match `foo`, but it shouldn't.\r\n* [BUG #1765](https://github.com/BurntSushi/ripgrep/issues/1765):\r\n  Fix panic when `--crlf` is used in some cases.\r\n* [BUG #1638](https://github.com/BurntSushi/ripgrep/issues/1638):\r\n  Correctly sniff UTF-8 and do transcoding, like we do for UTF-16.\r\n* [BUG #1816](https://github.com/BurntSushi/ripgrep/issues/1816):\r\n  Add documentation for glob alternate syntax, e.g., `{a,b,..}`.\r\n* [BUG #1847](https://github.com/BurntSushi/ripgrep/issues/1847):\r\n  Clarify how the `--hidden` flag works.\r\n* [BUG #1866](https://github.com/BurntSushi/ripgrep/issues/1866#issuecomment-841635553):\r\n  Fix bug when computing column numbers in `--vimgrep` mode.\r\n* [BUG #1868](https://github.com/BurntSushi/ripgrep/issues/1868):\r\n  Fix bug where `--passthru` and `-A/-B/-C` did not override each other.\r\n* [BUG #1869](https://github.com/BurntSushi/ripgrep/pull/1869):\r\n  Clarify docs for `--files-with-matches` and `--files-without-match`.\r\n* [BUG #1878](https://github.com/BurntSushi/ripgrep/issues/1878):\r\n  Fix bug where `\\A` could produce unanchored matches in multiline search.\r\n* [BUG 94e4b8e3](https://github.com/BurntSushi/ripgrep/commit/94e4b8e3):\r\n  Fix column numbers with `--vimgrep` is used with `-U/--multiline`.",
+              "reactions": {
+                "url": "https://api.github.com/repos/BurntSushi/ripgrep/releases/44518686/reactions",
+                "total_count": 359,
+                "+1": 166,
+                "-1": 0,
+                "laugh": 3,
+                "hooray": 79,
+                "confused": 0,
+                "heart": 71,
+                "rocket": 35,
+                "eyes": 5
+              }
+            }"##;
+        /*
+        This is the configuration in lifter.config for an entry:
+
+        [template:github_api_latest]
+        method = api_json
+        # or method = scrape
+        page_url = https://api.github.com/repos/{project}/releases/latest
+        version_tag = $.tag_name
+        anchor_tag = $.assets.*.browser_download_url
+
+        [ripgrep-api]
+        template = github_api_latest
+        project = BurntSushi/ripgrep
+        anchor_text = ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
+        target_filename_to_extract_from_archive = rg
+        version = 13.0.0
+
+        After all substitutions are made, it will look like this:
+
+        [ripgrep-api]
+        method = api_json
+        page_url = https://api.github.com/repos/BurntSushi/ripgrep/releases/latest
+        version_tag = $.tag_name
+        anchor_tag = $.assets.*.browser_download_url
+        template = github_api_latest
+        project = BurntSushi/ripgrep
+        anchor_text = ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
+        target_filename_to_extract_from_archive = rg
+        version = 13.0.0
+        */
+        let conf = Config {
+            template: "github_api_latest".to_string(),
+            version: Some("13.0.0".to_string()),
+            page_url: "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest".to_string(),
+            anchor_tag: "$.assets.*.browser_download_url".to_string(),
+            anchor_text: r"ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz".to_string(),
+            version_tag: Some("$.tag_name".to_string()),
+            target_filename_to_extract_from_archive: Some("rg".to_string()),
+            desired_filename: None,
+        };
+        let out = extract_data_from_json(payload, &conf)?;
+        let expected_hit = Hit {
+            version : "13.0.0".to_string(),
+            download_url : "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-unknown-linux-musl.tar.gz".to_string()
+        };
+        assert_eq!(out, Some(expected_hit));
+        Ok(())
     }
 }
