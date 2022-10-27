@@ -293,9 +293,15 @@ are updated frequently, in incompatible ways. There are several
 downsides to using the API:
 - There are more severe rate limits. This is particularly true for
 unauthenticated requests, and for a tool like lifter which makes
-a bunch of request as its normal operation, is unusable, which means...
+a bunch of requests as its normal operation, is unusable, which means...
 - You pretty much have to use authenticated requests, which means you
 will need to provide a [Personal Access Token](https://github.com/settings/tokens)
+- Tokens expire, which means you will have to periodically make a new
+one and update your cron to use that. They _should_ expire because
+tokens that never expire are a security risk. However, if a token
+wasn't necessary you also wouldn't have the security risk. Needing
+a token to get around the rate limits now also means you need to
+manage token lifetime.
 - Authentication means you can and will be tracked.
 
 Because of these changes, the earlier description of how to configure
@@ -346,13 +352,13 @@ update itself looks like:
 
 ```ini
 [lifter]
-template = github_release_latest
+template = github_api_latest
 project = cjrh/lifter
 anchor_text = lifter-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
 version = 0.1.1
 
 [lifter.exe]
-template = github_release_latest
+template = github_api_latest
 project = cjrh/lifter
 anchor_text = lifter-(\d+\.\d+\.\d+)-x86_64-pc-windows-msvc.zip
 version = 0.1.1
