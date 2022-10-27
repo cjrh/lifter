@@ -28,13 +28,15 @@ struct Args {
     /// Only run these names. Comma separated.
     #[structopt(short = "f", long = "filter")]
     filter: Option<String>,
+    #[structopt(short = "x", long = "threads", default_value = "1")]
+    threads: usize,
 }
 
 #[paw::main]
 fn main(args: Args) -> Result<()> {
     // We're using threads for IO, so we can use more than cpu count
     rayon::ThreadPoolBuilder::new()
-        .num_threads(8)
+        .num_threads(args.threads)
         .build_global()
         .unwrap();
 

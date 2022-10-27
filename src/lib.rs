@@ -384,23 +384,34 @@ fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
             attempts_remaining -= 1;
         }
 
-        let resp = ureq::get(url)
+        let resp = if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+            let authorization_header_value = format!("token {token}");
+            ureq::get(url)
+                    .set("Authorization", &authorization_header_value)
+                    .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
+                    .call()?
+        } else {
+            ureq::get(url)
                 .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
-                .call()?;
+                .call()?
+        };
         let status_code = resp.status();
 
         debug!("Fetching {section}, status: {status_code}");
         match status_code {
             200..=299 => break resp,
             // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status#client_error_responses
-            408 | 425 | 429 | 500 | 502 | 503 | 504 => {
+            403 | 408 | 425 | 429 | 500 | 502 | 503 | 504 => {
                 let zzz = ((10 - attempts_remaining) * 4).min(60);
+                if status_code == 403 {
+                    let body = resp.into_string()?;
+                    info!("Got 403: {body}");
+                }
                 info!("Got status {status_code} fetching {section}. Sleeping for {zzz} secs...");
                 std::thread::sleep(Duration::from_secs(zzz));
                 continue;
             }
             _ => {
-                // let body = resp.text()?;
                 let body = resp.into_string()?;
                 let msg = format!(
                     "Unexpected error fetching {url}. Status {status_code}. \
@@ -411,7 +422,6 @@ fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
         };
     };
 
-    // let body = resp.text()?;
     let body = resp.into_string()?;
     debug!("{}", &body);
     extract_data_from_json(body, conf)

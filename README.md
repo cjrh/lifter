@@ -12,9 +12,9 @@ newer versions when available*.
 Nearly all projects that make CLI tools, like say _ripgrep_,
 put those binary artifacts in Github releases; but then we
 have to wait until someone packages those binaries
-into various OS distro package managers so that we can 
+into various OS distro package managers so that we can
 get them via _apt_ or _yum_ or _chocolatey_.  No more
-waiting! _lifter_ will download directly from the 
+waiting! _lifter_ will download directly from the
 Github Releases page, if there is a new version released.
 
 ### Why the name?
@@ -79,7 +79,7 @@ $ ls -l | rg rg
 ```
 
 Unlike most package managers like *apt*, *scoop*, *brew*, *chocolatey*
-and many others that focus on a single operating system, *lifter* can 
+and many others that focus on a single operating system, *lifter* can
 download binaries for multiple operating
 systems and simply place those in a directory. I regularly work on
 computers with different operating systems and I like my tools to travel
@@ -87,7 +87,7 @@ with me. By merely copying (or syncing) my "binaries" directory, I have
 everything available regardless of whether I'm on Linux or Windows.
 
 This design only works because these applications can be deployed as
-single-file exectuables. For more complex applications, a heavier
+*single-file exectuables*. For more complex applications, a heavier
 OS-specific package manager will be required.
 
 ## Usage
@@ -108,7 +108,7 @@ and many others.
 
 *lifter* works with other sites besides Github. The sample `lifter.config`
 includes a definition for downloading the amazing _redbean_ binary
-from @jart's site `https://justine.lol/redbean/`. You should check 
+from @jart's site `https://justine.lol/redbean/`. You should check
 out that project, it's wild.
 
 ### Automation
@@ -124,10 +124,13 @@ SHELL=/bin/bash
 
 I said that *lifter* is for fetch CLI binaries. That's what I'm *using* it
 for, but it's more than that. It's an engine for downloading things from
-web pages. It works like a web scraper.  There is a declarative mechanism 
+web pages. It works like a web scraper.  There is a declarative mechanism
 for specifying how to find the download item on a page. You do have to
 do a bit of work to figure out the right CSS to target the download
 link correctly.
+
+*NOTE: this section is out of date because of the switch from page
+scraping to calling the Github API*
 
 Let's look at the ripgrep configuration entry:
 
@@ -153,7 +156,7 @@ Each section will download a file; one for Linux and one for Windows.
 The `anchor_tag` is the CSS selector for finding a section that contains
 the target download link.
 
-If there are many tags matching the `anchor_tag`, all of them will be 
+If there are many tags matching the `anchor_tag`, all of them will be
 checked to match the required `anchor_text`. This is how the Github
 Releases page works. In one "release" section, there can be many file
 downloads available. For example, one for each target architecture.
@@ -182,21 +185,21 @@ I think I've come across it on a Sourceforge page, for example.
 Finally, archives. Not all Github Releases artifacts are archives, some are
 just the executables themselves. But in the ripgrep examples above, the Linux
 download is a `.tar.gz` file, while the Windows download is a `.zip`.
-By default, *lifter* will search within the archive to find a file that 
+By default, *lifter* will search within the archive to find a file that
 matches the *name* of that section. So if a section is called `[sd]` then
-*lifter* will search for a file called `sd` inside the `.tar.gz` 
+*lifter* will search for a file called `sd` inside the `.tar.gz`
 archive for that item. Likewise, for the section called `[sd.exe]`,
 it'll look for `sd.exe` inside the zipfile for that section.
 
 To override this, all you have to do is set the field
 `target_filename_to_extract_from_archive`. If this is present, *lifter* will
 use that name, rather than the name of the section to find the target file.
-archive. For example, in our ripgrep examples, we called the 
+archive. For example, in our ripgrep examples, we called the
 section name, say, `[ripgrep Windows]`, but the file that we intend
 to extract from the archive is called `rg.exe`. This is why we
-set the target filename for extraction, explicitly. For ripgrep, 
+set the target filename for extraction, explicitly. For ripgrep,
 we could remove the target filename setting if the section names were
-changed to `[rg]` and `[rg.exe]`. In this case, the section names would 
+changed to `[rg]` and `[rg.exe]`. In this case, the section names would
 be the filenames lookup up in each respective archive.
 
 Sometimes things aren't so neat and we'd prefer to rename whatever
@@ -213,19 +216,19 @@ version = v0.1.0
 ```
 
 In this case, the name of the target executable as it appears inside the
-release archive is `fcp-0.1.0-x86_64-unknown-linux-gnu`. We would 
-prefer that it be called `fcp` after extraction. To force this, 
+release archive is `fcp-0.1.0-x86_64-unknown-linux-gnu`. We would
+prefer that it be called `fcp` after extraction. To force this,
 set the `desired_filename` field. The extracted executable will
 be renamed to this after extraction.
 
 ## Templates
 
-The description given in the *Details* section above is accurate but 
-laborious. It turns out that the CSS targeting is common for all 
+The description given in the *Details* section above is accurate but
+laborious. It turns out that the CSS targeting is common for all
 projects on the same site, e.g., Github Releases pages. Thus, there
 is support for templates in the config file definition.
 
-If you look at the example `lifter.config` file in this repo, what 
+If you look at the example `lifter.config` file in this repo, what
 you actually see for ripgrep is the following:
 
 ```ini
@@ -249,7 +252,7 @@ version = v0.55.0
 ```
 
 What actually happens at runtime is that if a section, like `ripgrep`,
-assigns a `template`, all the fields from that template are copied 
+assigns a `template`, all the fields from that template are copied
 into that section's declarations. In the example above, `page_url`,
 `anchor_tag`, and `version_tag` will be copied into each of the
 sections for `[ripgrep]` and `[starship.exe]`.
@@ -258,7 +261,7 @@ If you look carefully, you'll see that the template value for
 `page_url` above contains the variable `{project}`. That will
 be substituted for the value of `project` that is declared
 inside each of the sections. In the above example, `page_url`
-will be expanded to 
+will be expanded to
 
 ```
 page_url = https://github.com/BurntSushi/ripgrep/releases
@@ -272,10 +275,73 @@ page_url = https://github.com/starship/starship/releases
 
 for the `[starship.exe]` project.
 
+## Github API
+
+Github made a change to their _Releases_ pages that requires running
+JavaScript to get the page to fully render. This change was likely
+made to break scrapers like lifter. I have a working branch that uses
+embedded Chrome to fully render pages (with JS) that works---but for
+now I've implemented a method that uses the Github API to download
+binaries, rather than scrape. I will monitor how smoothly this goes
+and if it becomes too tedious I'll switch back from the API to
+scraping with the embedded browser engine.
+
+Using the API has both benefits and downsides. The only benefit for
+lifter is that there might be more stability in the API than in the
+_Releases_ HTML page structure. Scrapers usually suffer if websites
+are updated frequently, in incompatible ways. There are several
+downsides to using the API:
+- There are more severe rate limits. This is particularly true for
+unauthenticated requests, and for a tool like lifter which makes
+a bunch of request as its normal operation, is unusable, which means...
+- You pretty much have to use authenticated requests, which means you
+will need to provide a [Personal Access Token](https://github.com/settings/tokens)
+- Authentication means you can and will be tracked.
+
+Because of these changes, the earlier description of how to configure
+lifter will no longer work. However, the configuration is nearly the
+same, exception for two differences.
+
+The first difference is in the config file, `lifter.config`. The
+template section near the top must be written like this:
+
+```inifile
+[template:github_api_latest]
+method = api_json
+page_url = https://api.github.com/repos/{project}/releases/latest
+version_tag = $.tag_name
+anchor_tag = $.assets.*.browser_download_url
+```
+
+Note the change from `github_release_latest` to `github_api_latest`.
+Then, simply change the `template` value only. Here's the example
+for ripgrep:
+
+```inifile
+[ripgrep]
+template = github_api_latest
+project = BurntSushi/ripgrep
+anchor_text = ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
+target_filename_to_extract_from_archive = rg
+version = 13.0.0
+```
+
+It is identical, except for the `template` value which now refers
+to the new one.
+
+The second change is that you must provide a personal access token
+as a parameter to `lifter`:
+
+```bash
+$ GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx lifter -vv
+```
+
+It will run without specifying the token, but the rate limits come
+very quickly, after only a handful of repos are checked.
 
 ## Geek creds
 
-Lifter can update itself. The config entry required to allow lifter to 
+Lifter can update itself. The config entry required to allow lifter to
 update itself looks like:
 
 ```ini
@@ -294,12 +360,12 @@ version = 0.1.1
 
 ## Other alternatives
 
-A pre-existing project doing something very similar is 
+A pre-existing project doing something very similar is
 [webinstall](https://github.com/webinstall/webi-installers). By comparison,
 *lifter*:
 - has fewer features
 - has fewer options
 - has fewer developers
 
-*lifter* needs only itself (binary) and the `lifter.config` file to 
+*lifter* needs only itself (binary) and the `lifter.config` file to
 work.
