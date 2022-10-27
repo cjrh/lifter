@@ -1076,6 +1076,7 @@ mod tests {
         version = 13.0.0
         */
         let conf = Config {
+            method: "api_json".to_string(),
             template: "github_api_latest".to_string(),
             version: Some("13.0.0".to_string()),
             page_url: "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest".to_string(),
