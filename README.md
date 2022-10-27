@@ -122,7 +122,7 @@ SHELL=/bin/bash
 
 ## Details
 
-I said that *lifter* is for fetch CLI binaries. That's what I'm *using* it
+I said that *lifter* is for fetching CLI binaries. That's what I'm *using* it
 for, but it's more than that. It's an engine for downloading things from
 web pages. It works like a web scraper.  There is a declarative mechanism
 for specifying how to find the download item on a page. You do have to
@@ -306,7 +306,7 @@ manage token lifetime.
 
 Because of these changes, the earlier description of how to configure
 lifter will no longer work. However, the configuration is nearly the
-same, exception for two differences.
+same, except for two differences.
 
 The first difference is in the config file, `lifter.config`. The
 template section near the top must be written like this:
@@ -336,7 +336,7 @@ It is identical, except for the `template` value which now refers
 to the new one.
 
 The second change is that you must provide a personal access token
-as a parameter to `lifter`:
+as an env var:
 
 ```bash
 $ GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx lifter -vv
