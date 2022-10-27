@@ -33,6 +33,7 @@ jobs:
             codeload.github.com:443
             github.com:443
             pipelines.actions.githubusercontent.com:443
+            auth.docker.io:443
             index.docker.io:443
             oauth2.sigstore.dev:443
 
