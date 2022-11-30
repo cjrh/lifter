@@ -389,34 +389,41 @@ fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
             ureq::get(url)
                     .set("Authorization", &authorization_header_value)
                     .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
-                    .call()?
+                    .call()
         } else {
             ureq::get(url)
                 .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
-                .call()?
+                .call()
         };
-        let status_code = resp.status();
 
-        debug!("Fetching {section}, status: {status_code}");
-        match status_code {
-            200..=299 => break resp,
-            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status#client_error_responses
-            403 | 408 | 425 | 429 | 500 | 502 | 503 | 504 => {
-                let zzz = ((10 - attempts_remaining) * 4).min(60);
-                if status_code == 403 {
-                    let body = resp.into_string()?;
-                    info!("Got 403: {body}");
+        match resp {
+            Ok(response) => break response,
+            Err(ureq::Error::Status(status_code, resp)) => {
+                match status_code {
+                    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status#client_error_responses
+                    403 | 408 | 425 | 429 | 500 | 502 | 503 | 504 => {
+                        let zzz = ((10 - attempts_remaining) * 4).min(60);
+                        if status_code == 403 {
+                            let body = resp.into_string()?;
+                            info!("Got 403: {body}");
+                        }
+                        info!("Got status {status_code} fetching {section}. Sleeping for {zzz} secs...");
+                        std::thread::sleep(Duration::from_secs(zzz));
+                        continue;
+                    }
+                    _ => {
+                        let body = resp.into_string()?;
+                        let msg = format!(
+                            "Unexpected error fetching {url}. Status {status_code}. \
+                            Body: {body}"
+                        );
+                        return Err(anyhow!(msg));
+                    }
                 }
-                info!("Got status {status_code} fetching {section}. Sleeping for {zzz} secs...");
-                std::thread::sleep(Duration::from_secs(zzz));
-                continue;
             }
-            _ => {
-                let body = resp.into_string()?;
-                let msg = format!(
-                    "Unexpected error fetching {url}. Status {status_code}. \
-                    Body: {body}"
-                );
+            Err(_) => {
+                /* some kind of io/transport error */
+                let msg = format!("Unexpected error fetching {url}.");
                 return Err(anyhow!(msg));
             }
         };
@@ -498,7 +505,7 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
         match status_code {
             200..=299 => break resp,
             // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status#client_error_responses
-            408 | 425 | 429 | 500 | 502 | 503 | 504 => {
+            403 | 408 | 425 | 429 | 500 | 502 | 503 | 504 => {
                 let zzz = ((10 - attempts_remaining) * 4).min(60);
                 info!("Got status {status_code} fetching {section}. Sleeping for {zzz} secs...");
                 std::thread::sleep(Duration::from_secs(zzz));
