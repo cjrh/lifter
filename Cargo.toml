@@ -30,5 +30,5 @@ strfmt = "0.2.2"
 url = "2.3.1"
 jsonpath-rust = "0.2.0"
 serde_json = "1.0.91"
-ureq = "2.5.0"
+ureq = "2.6.0"
 
