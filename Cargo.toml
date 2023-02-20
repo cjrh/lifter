@@ -28,7 +28,7 @@ xz2 = "0.1.7"
 rayon = "1.6.1"
 strfmt = "0.2.4"
 url = "2.3.1"
-jsonpath-rust = "0.2.0"
+jsonpath-rust = "0.2.2"
 serde_json = "1.0.93"
 ureq = "2.6.2"
 
