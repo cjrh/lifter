@@ -12,7 +12,7 @@ panic = "abort"
 opt-level = 'z'
 
 [dependencies]
-scraper = "0.14.0"
+scraper = "0.15.0"
 regex = "1.6.0"
 structopt = { version = "0.3.26", features = ["paw"] }
 paw = "1.0.0"
