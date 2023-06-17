@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="300px" height="210px">
+  <text x="110" y="30" font-size="1.1em" stroke="red">stroke="red"</text>
+  <text x="110" y="60" font-size="1.1em" stroke="orange">stroke="orange"</text>
+  <text x="110" y="90" font-size="1.1em" stroke="yellow">stroke="yellow"</text>
+  <text x="110" y="120" font-size="1.1em" stroke="green">stroke="green"</text>
+  <text x="110" y="150" font-size="1.1em" stroke="blue">stroke="blue"</text>
+  <text x="110" y="180" font-size="1.1em" stroke="darkblue">stroke="darkblue"</text>
+  <text x="110" y="210" font-size="1.1em" stroke="violet">stroke="violet"</text>
+</svg>
+
