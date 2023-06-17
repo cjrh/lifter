@@ -219,6 +219,7 @@ jobs:
       with:
         egress-policy: block
         allowed-endpoints: >
+          index.crates.io:443
           crates.io:443
           github.com:443
           static.crates.io:443
