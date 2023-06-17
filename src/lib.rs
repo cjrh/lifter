@@ -31,6 +31,13 @@ struct Config {
     anchor_text: String,
     /// The version tag to check. The "text" of the tag will be used.
     version_tag: Option<String>,
+    /// The commit tag is used if the "version" always comes
+    /// back as the same thing. An example of this is neovim,
+    /// where the project keeps using the tag `stable`, but the
+    /// commit hash changes. In this case, we'll use the commit
+    /// as a disambiguator.
+    commit_tag: Option<String>,
+    commit: Option<String>,
     /// Target filename inside archive. Leave blank if download is not an archive.
     target_filename_to_extract_from_archive: Option<String>,
     /// After download/extraction, rename file to this
@@ -48,6 +55,7 @@ impl Config {
 #[derive(Debug, PartialEq)]
 struct Hit {
     version: String,
+    commit: Option<String>,
     download_url: String,
 }
 
@@ -130,6 +138,9 @@ fn insert_fields_from_template(
         if let Some(value) = template_fields.get("version_tag") {
             cf.version_tag = Some(strfmt(value, values)?);
         };
+        if let Some(value) = template_fields.get("commit_tag") {
+            cf.commit_tag = Some(strfmt(value, values)?);
+        };
         if let Some(value) = template_fields.get("method") {
             cf.method = strfmt(value, values)?;
         };
@@ -179,6 +190,10 @@ pub fn run_section(
         cf.version_tag = Some(strfmt(value, &tmp)?);
     };
 
+    if let Some(value) = tmp.get("commit_tag") {
+        cf.commit_tag = Some(strfmt(value, &tmp)?);
+    };
+
     cf.target_filename_to_extract_from_archive =
         if let Some(value) = tmp.get("target_filename_to_extract_from_archive") {
             // The target filename parameter is present, so we'll use
@@ -198,6 +213,9 @@ pub fn run_section(
     if let Some(value) = tmp.get("version") {
         cf.version = Some(strfmt(value, &tmp)?);
     };
+    if let Some(value) = tmp.get("commit") {
+        cf.commit = Some(strfmt(value, &tmp)?);
+    };
 
     cf.desired_filename = if let Some(value) = tmp.get("desired_filename") {
         Some(strfmt(value, &tmp)?)
@@ -215,17 +233,29 @@ pub fn run_section(
     // then update the config file with the new version.
     // TODO: would be useful to collect things that changed,
     //   and what versions they changed from/to.
-    if let Some(new_version) = process(section, &mut cf)? {
+    if let Some(hit) = process(section, &mut cf)? {
         // New version, must update the version number in the
         // config file.
-        info!("[{}] Downloaded new version: {}", section, &new_version);
-        // TODO: actually need a mutex around the following 3 lines.
+        let new_version = hit.version;
+
+        // TODO: actually need a mutex around the mutation of the config file.
         let conf_write = tini::Ini::from_file(&filename).unwrap();
-        conf_write
-            .section(section)
-            .item("version", &new_version)
-            .to_file(&filename)
-            .unwrap();
+        if let Some(new_commit) = hit.commit {
+            info!("[{}] Downloaded new version: {}:{}", section, &new_version, &new_commit);
+            conf_write
+                .section(section)
+                .item("version", &new_version)
+                .item("commit", &new_commit)
+                .to_file(&filename)
+                .unwrap();
+        } else {
+            info!("[{}] Downloaded new version: {}", section, &new_version);
+            conf_write
+                .section(section)
+                .item("version", &new_version)
+                .to_file(&filename)
+                .unwrap();
+        }
         debug!("[{}] Updated config file.", section);
     }
     Ok(())
@@ -243,7 +273,7 @@ fn target_file_already_exists(conf: &Config) -> bool {
     Path::new(&filename_to_check).exists()
 }
 
-fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
+fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
     let url = &conf.page_url;
 
     let parse_result = match conf.method.as_str() {
@@ -258,13 +288,42 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
 
     let existing_version = conf.version.as_ref().unwrap();
     // TODO: must compare each of the components of the version string as integers.
-    if target_file_already_exists(conf) && &hit.version <= existing_version {
+    if target_file_already_exists(conf) && &hit.version < existing_version {
         info!(
             "[{}] Found version is not newer: {}; Skipping.",
             section, &hit.version
         );
         return Ok(None);
+    } else if target_file_already_exists(conf) && &hit.version == existing_version {
+        // If a commit tag has been specified for this conf, we should check
+        // that too. If the version tag is the same, and the commit hash
+        // is merely different, we will also consider that as a new version.
+        if let Some(ref found_commit) = hit.commit  {
+            debug!("Found commit: {found_commit}");
+            if let Some(current_commit) = &conf.commit {
+                debug!("Current commit: {current_commit}");
+                if found_commit == current_commit {
+                    info!(
+                        "[{}] Found version {}:{} is not newer than existing version {}:{}; Skipping.",
+                        section, &hit.version, found_commit, &existing_version, current_commit
+                    );
+                    return Ok(None);
+                }
+            }
+            // Reaching here means there was no commit current in the config file.
+            // We will continue with the download and the found_commit shiould
+            // get written in.
+        } else {
+            // If the commit tag wasn't configured, nor found when
+            // scanning, we treat that as the commit not being different.
+            info!(
+                "[{}] Found version {} is not newer than existing version {}; Skipping.",
+                section, &hit.version, &existing_version
+            );
+            return Ok(None);
+        };
     }
+
     info!("[{}] Downloading version {}", section, &hit.version);
 
     let download_url = &hit.download_url;
@@ -355,7 +414,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<String>> {
         }
     }
 
-    Ok(Some(hit.version))
+    Ok(Some(hit))
 }
 
 /// Change file permissions to be executable. This only happens on
@@ -449,6 +508,19 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
     let item = item.clone().to_data();
     let version_str = item.as_str().unwrap_or("");
 
+    let commit_str = if let Some(ctag) = &conf.commit_tag {
+        let finder = JsonPathFinder::from_str(
+            payload.as_ref(),
+            &ctag,
+        ).unwrap();
+        let item = &finder.find_slice()[0];
+        let item = item.clone().to_data();
+        let v = item.as_str().unwrap_or("");
+        Some(v.to_string())
+    } else {
+        None
+    };
+
     let finder = JsonPathFinder::from_str(
         payload.as_ref(),
         &conf.anchor_tag,
@@ -466,6 +538,7 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
         if re_pat.is_match(&u) {
             return Ok(Some(Hit {
                 version: version_str.to_string(),
+                commit: commit_str,
                 download_url: u,
             }));
         }
@@ -574,6 +647,8 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
                 info!("[{}] Found a match on versions tag: {}", section, version);
                 Ok(Some(Hit {
                     version,
+                    // TODO: implement commit tracking for HTML page extraction
+                    commit: None,
                     download_url,
                 }))
             } else {
