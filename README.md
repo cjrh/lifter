@@ -29,8 +29,7 @@ Take your pick.  (By the way, `dictomatic` is another one of my
 hobby projects, and `lifter` will download that binary for you
 too.)
 
-![Alt text](./assets/warn01.svg)
-<img src="./assets/warn01.svg">
+<img src="./assets/warn01.svg" alt="">
 
 ![Alt text](https://raw.github.com/cjrh/lifter/master/assets/warn01.svg)
 <img src="https://raw.github.com/cjrh/lifter/master/assets/warn01.svg">
