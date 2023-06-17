@@ -29,17 +29,18 @@ Take your pick.  (By the way, `dictomatic` is another one of my
 hobby projects, and `lifter` will download that binary for you
 too.)
 
-<html>
-<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="300px" height="210px">
-  <text x="110" y="30" font-size="1.1em" stroke="red">stroke="red"</text>
-  <text x="110" y="60" font-size="1.1em" stroke="orange">stroke="orange"</text>
-  <text x="110" y="90" font-size="1.1em" stroke="yellow">stroke="yellow"</text>
-  <text x="110" y="120" font-size="1.1em" stroke="green">stroke="green"</text>
-  <text x="110" y="150" font-size="1.1em" stroke="blue">stroke="blue"</text>
-  <text x="110" y="180" font-size="1.1em" stroke="darkblue">stroke="darkblue"</text>
-  <text x="110" y="210" font-size="1.1em" stroke="violet">stroke="violet"</text>
-</svg>
-</html>
+![Alt text](./assets/warn01.svg)
+<img src="./assets/warn01.svg">
+
+![Alt text](https://raw.github.com/cjrh/lifter/master/assets/warn01.svg)
+<img src="https://raw.github.com/cjrh/lifter/master/assets/warn01.svg">
+
+> __Warning__
+> This is an *alpha-quality hobby project*. I do use this
+> tool myself, but I started this project mainly to learn rust. While I
+> appreciate community input, I don't have much extra time to spend on this and
+> I'll be unresponsive to issue reports. I will however happily merge PRs with
+> improvements.
 
 > :warning: WARNING: This is an *alpha-quality hobby project*. I do use this
 > tool myself, but I started this project mainly to learn rust. While I
