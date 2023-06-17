@@ -29,6 +29,12 @@ Take your pick.  (By the way, `dictomatic` is another one of my
 hobby projects, and `lifter` will download that binary for you
 too.)
 
+<svg viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+  <defs></defs>
+  <rect x="71.048" y="59.503" width="328.597" height="190.941" style="fill: rgb(216, 216, 216); stroke: rgb(0, 0, 0);"></rect>
+  <text style="white-space: pre; fill: rgb(51, 51, 51); font-family: Arial, sans-serif; font-size: 24.9px;" x="93.25" y="97.691">Hey</text>
+</svg>
+
 > :warning: WARNING: This is an *alpha-quality hobby project*. I do use this
 > tool myself, but I started this project mainly to learn rust. While I
 > appreciate community input, I don't have much extra time to spend on this and
