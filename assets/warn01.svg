@@ -14,7 +14,7 @@
       namespace could be omitted, but it is mandatory in the
       context of an SVG document
     -->
-    <h1 xmlns="http://www.w3.org/1999/xhtml">
+    <h1 xmlns="http://www.w3.org/1999/xhtml" style="filter: invert(1);">
     This is a heading
     </h1>
     <div xmlns="http://www.w3.org/1999/xhtml">
