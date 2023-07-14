@@ -38,7 +38,7 @@ jobs:
             oauth2.sigstore.dev:443
 
       - name: "Checkout code"
-        uses: actions/checkout@83b7061638ee4956cf7545a6f7efe594e5ad0247 # v2.4.0
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v2.4.0
         with:
           persist-credentials: false
 
