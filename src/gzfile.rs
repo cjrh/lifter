@@ -1,5 +1,5 @@
-use std::io::{Read, Seek, Write};
 use crate::Config;
+use std::io::{Read, Seek, Write};
 
 pub fn extract_target_from_gzfile(compressed: &mut [u8], conf: &Config) {
     let mut cbuf = std::io::Cursor::new(compressed);

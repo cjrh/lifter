@@ -1,5 +1,5 @@
-use log::{debug, trace, warn};
 use crate::Config;
+use log::{debug, trace, warn};
 
 pub fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
     // std::fs::write("compressed.tar.gz", &compressed).unwrap();
@@ -12,8 +12,8 @@ pub fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
         "To extract from an archive, a target filename must be supplied using the \
         parameter \"target_filename_to_extract_from_archive\" in the config file.",
     );
-    let re_pat =
-        crate::make_re_target_filename(conf).expect("Failed to construct a regex for the target filename");
+    let re_pat = crate::make_re_target_filename(conf)
+        .expect("Failed to construct a regex for the target filename");
 
     for file in archive.entries().unwrap() {
         let mut file = file.unwrap();

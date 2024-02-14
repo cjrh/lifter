@@ -12,10 +12,10 @@ use scraper::{Html, Selector};
 use strfmt::strfmt;
 use url::Url;
 
-mod zipfile;
 mod gzfile;
 mod tarfile;
 mod tarxzfile;
+mod zipfile;
 
 /// This struct represents a particular artifact that will
 /// be downloaded.
@@ -247,7 +247,10 @@ pub fn run_section(
         let _lock = config_write_mutex.lock().unwrap();
         let conf_write = tini::Ini::from_file(&filename).unwrap();
         if let Some(new_commit) = hit.commit {
-            info!("[{}] Downloaded new version: {}:{}", section, &new_version, &new_commit);
+            info!(
+                "[{}] Downloaded new version: {}:{}",
+                section, &new_version, &new_commit
+            );
             conf_write
                 .section(section)
                 .item("version", &new_version)
@@ -304,7 +307,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
         // If a commit tag has been specified for this conf, we should check
         // that too. If the version tag is the same, and the commit hash
         // is merely different, we will also consider that as a new version.
-        if let Some(ref found_commit) = hit.commit  {
+        if let Some(ref found_commit) = hit.commit {
             debug!("Found commit: {found_commit}");
             if let Some(current_commit) = &conf.commit {
                 debug!("Current commit: {current_commit}");
@@ -515,10 +518,7 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
     let version_str = item.as_str().unwrap_or("");
 
     let commit_str = if let Some(ctag) = &conf.commit_tag {
-        let finder = JsonPathFinder::from_str(
-            payload.as_ref(),
-            &ctag,
-        ).unwrap();
+        let finder = JsonPathFinder::from_str(payload.as_ref(), &ctag).unwrap();
         let item = &finder.find_slice()[0];
         let item = item.clone().to_data();
         let v = item.as_str().unwrap_or("");

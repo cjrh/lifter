@@ -1,7 +1,7 @@
-use std::path::Path;
+use crate::Config;
 use log::{debug, warn};
 use std::io::{Read, Write};
-use crate::Config;
+use std::path::Path;
 
 pub fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> anyhow::Result<()> {
     let mut cbuf = std::io::Cursor::new(compressed);
@@ -12,8 +12,8 @@ pub fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> anyh
         parameter \"target_filename_to_extract_from_archive\" in the config file.",
     );
 
-    let re_pat =
-        crate::make_re_target_filename(conf).expect("Failed to construct a regex for the target filename");
+    let re_pat = crate::make_re_target_filename(conf)
+        .expect("Failed to construct a regex for the target filename");
 
     for fname in archive
         .file_names()
