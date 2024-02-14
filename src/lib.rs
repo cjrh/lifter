@@ -1,3 +1,5 @@
+mod ui;
+
 use std::collections::HashMap;
 use std::io::{Read, Seek, Write};
 #[cfg(target_family = "unix")]
