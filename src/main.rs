@@ -107,8 +107,14 @@ fn main(args: Args) -> Result<()> {
     });
     trace!("Detected templates: {:?}", templates);
 
+    // Let's make a mutex and pass it to each of the `run_section()` calls
+    // that will run in separate threads. The mutex will be used to avoid
+    // collisions when writing updates to the config file.
+    use std::sync::Mutex;
+    let mutex = Mutex::new(());
+
     sections.par_iter().for_each(|(section, _hm)| {
-        match lifter::run_section(section, &templates, &conf, &filename) {
+        match lifter::run_section(section, &templates, &conf, &filename, &mutex) {
             Ok(_) => (),
             Err(e) => {
                 error!("{}", e);

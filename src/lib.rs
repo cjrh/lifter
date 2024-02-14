@@ -12,6 +12,11 @@ use scraper::{Html, Selector};
 use strfmt::strfmt;
 use url::Url;
 
+mod gzfile;
+mod tarfile;
+mod tarxzfile;
+mod zipfile;
+
 /// This struct represents a particular artifact that will
 /// be downloaded.
 #[derive(Default, Debug)]
@@ -155,6 +160,7 @@ pub fn run_section(
     templates: &Templates,
     conf: &tini::Ini,
     filename: &str,
+    config_write_mutex: &std::sync::Mutex<()>,
 ) -> Result<()> {
     let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
@@ -238,10 +244,13 @@ pub fn run_section(
         // config file.
         let new_version = hit.version;
 
-        // TODO: actually need a mutex around the mutation of the config file.
+        let _lock = config_write_mutex.lock().unwrap();
         let conf_write = tini::Ini::from_file(&filename).unwrap();
         if let Some(new_commit) = hit.commit {
-            info!("[{}] Downloaded new version: {}:{}", section, &new_version, &new_commit);
+            info!(
+                "[{}] Downloaded new version: {}:{}",
+                section, &new_version, &new_commit
+            );
             conf_write
                 .section(section)
                 .item("version", &new_version)
@@ -298,7 +307,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
         // If a commit tag has been specified for this conf, we should check
         // that too. If the version tag is the same, and the commit hash
         // is merely different, we will also consider that as a new version.
-        if let Some(ref found_commit) = hit.commit  {
+        if let Some(ref found_commit) = hit.commit {
             debug!("Found commit: {found_commit}");
             if let Some(current_commit) = &conf.commit {
                 debug!("Current commit: {current_commit}");
@@ -385,13 +394,13 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
     reader.read_to_end(&mut buf)?;
 
     if ext == ".tar.xz" {
-        extract_target_from_tarxz(&mut buf, conf);
+        tarxzfile::extract_target_from_tarxz(&mut buf, conf);
     } else if ext == ".zip" {
-        extract_target_from_zipfile(&mut buf, conf)?;
+        zipfile::extract_target_from_zipfile(&mut buf, conf)?;
     } else if ext == ".tar.gz" {
-        extract_target_from_tarfile(&mut buf, conf);
+        tarfile::extract_target_from_tarfile(&mut buf, conf);
     } else if ext == ".gz" {
-        extract_target_from_gzfile(&mut buf, conf);
+        gzfile::extract_target_from_gzfile(&mut buf, conf);
     } else if vec![".exe", "", ".com", ".appimage", ".AppImage"].contains(&ext) {
         // Windows executables are not compressed, so we only need to
         // handle renames, if the option is given.
@@ -509,10 +518,7 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
     let version_str = item.as_str().unwrap_or("");
 
     let commit_str = if let Some(ctag) = &conf.commit_tag {
-        let finder = JsonPathFinder::from_str(
-            payload.as_ref(),
-            &ctag,
-        ).unwrap();
+        let finder = JsonPathFinder::from_str(payload.as_ref(), &ctag).unwrap();
         let item = &finder.find_slice()[0];
         let item = item.clone().to_data();
         let v = item.as_str().unwrap_or("");
@@ -670,155 +676,6 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
 /// Returns a slice of the last n characters of a string
 fn slice_from_end(s: &str, n: usize) -> Option<&str> {
     s.char_indices().rev().nth(n).map(|(i, _)| &s[i..])
-}
-
-fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> Result<()> {
-    let mut cbuf = std::io::Cursor::new(compressed);
-    let mut archive = zip::ZipArchive::new(&mut cbuf)?;
-
-    let target_filename = conf.desired_filename.as_ref().expect(
-        "To extract from an archive, a target filename must be supplied using the \
-        parameter \"target_filename_to_extract_from_archive\" in the config file.",
-    );
-
-    let re_pat =
-        make_re_target_filename(conf).expect("Failed to construct a regex for the target filename");
-
-    for fname in archive
-        .file_names()
-        // What's dumb is that the borrow below `by_name` is a mutable
-        // borrow, which means that an immutable borrow for
-        // `archive.file_names` won't be allowed. To work around this,
-        // for now just collect all the filenames into a long list.
-        // Since we're looking for a specific name, it would be more
-        // efficient to first find the name, leave the loop, and in the
-        // next section do the extraction.
-        .map(String::from)
-        .collect::<Vec<String>>()
-    {
-        let mut file = archive.by_name(&fname)?;
-        let path = Path::new(&fname);
-        debug!(
-            "zip, got filename: {}",
-            &path.file_name().unwrap().to_str().unwrap()
-        );
-        if let Some(p) = &path.file_name() {
-            if re_pat.is_match(p.to_str().unwrap()) {
-                debug!("zip, Got a match: {}", &fname);
-                let mut rawfile = std::fs::File::create(&target_filename)?;
-                let mut buf = Vec::new();
-                file.read_to_end(&mut buf)?;
-                rawfile.write_all(&buf)?;
-                return Ok(());
-            }
-        }
-    }
-
-    warn!(
-        "Failed to find file inside archive: \"{}\"",
-        &target_filename
-    );
-
-    Ok(())
-}
-
-fn extract_target_from_gzfile(compressed: &mut [u8], conf: &Config) {
-    let mut cbuf = std::io::Cursor::new(compressed);
-    let mut archive = flate2::read::GzDecoder::new(&mut cbuf);
-
-    let target_filename = conf.desired_filename.as_ref().expect(
-        "To extract from an archive, a target filename must be supplied using the \
-        parameter \"target_filename_to_extract_from_archive\" in the config file.",
-    );
-
-    // If it's only `.gz` (and not `.tar.gz`) then it's a single file, so we don't
-    // worry about trying to match a regex, just save whatever is there into the
-    // `desired_filename`.
-
-    let mut buf = vec![];
-    archive.read_to_end(&mut buf).unwrap();
-    let mut file = std::fs::File::create(target_filename).unwrap();
-    file.seek(std::io::SeekFrom::Start(0)).unwrap();
-    file.write_all(&buf).unwrap();
-}
-
-fn extract_target_from_tarfile(compressed: &mut [u8], conf: &Config) {
-    // std::fs::write("compressed.tar.gz", &compressed).unwrap();
-
-    let mut cbuf = std::io::Cursor::new(compressed);
-    let gzip_archive = flate2::read::GzDecoder::new(&mut cbuf);
-    let mut archive = tar::Archive::new(gzip_archive);
-
-    let target_filename = conf.desired_filename.as_ref().expect(
-        "To extract from an archive, a target filename must be supplied using the \
-        parameter \"target_filename_to_extract_from_archive\" in the config file.",
-    );
-    let re_pat =
-        make_re_target_filename(conf).expect("Failed to construct a regex for the target filename");
-
-    for file in archive.entries().unwrap() {
-        let mut file = file.unwrap();
-        trace!("This is what I found in the tar.xz: {:?}", &file.header());
-        let raw_path = &file.header().path().unwrap();
-        debug!(
-            "tar.gz, got filename: {}",
-            &raw_path.file_name().unwrap().to_str().unwrap()
-        );
-
-        if let Some(p) = &raw_path.file_name() {
-            if let Some(pm) = p.to_str() {
-                if re_pat.is_match(pm) {
-                    debug!("tar.gz, Got a match: {}", &pm);
-                    file.unpack(&target_filename).unwrap();
-                    return;
-                }
-            }
-        }
-    }
-
-    warn!(
-        "Failed to find file \"{}\" inside archive",
-        &target_filename
-    );
-}
-
-fn extract_target_from_tarxz(compressed: &mut [u8], conf: &Config) {
-    let cbuf = std::io::Cursor::new(compressed);
-    let mut decompressor = xz2::read::XzDecoder::new(cbuf);
-    let mut archive = tar::Archive::new(&mut decompressor);
-
-    let target_filename = conf.desired_filename.as_ref().expect(
-        "To extract from an archive, a target filename must be supplied using the \
-        parameter \"target_filename_to_extract_from_archive\" in the config file.",
-    );
-
-    let re_pat =
-        make_re_target_filename(conf).expect("Failed to construct a regex for the target filename");
-
-    for file in archive.entries().unwrap() {
-        let mut file = file.unwrap();
-        trace!("This is what I found in the tar.xz: {:?}", &file.header());
-        let raw_path = &file.header().path().unwrap();
-        debug!(
-            "tar.gz, got filename: {}",
-            &raw_path.file_name().unwrap().to_str().unwrap()
-        );
-
-        if let Some(p) = &raw_path.file_name() {
-            if let Some(pm) = p.to_str() {
-                if re_pat.is_match(pm) {
-                    debug!("tar.gz, Got a match: {}", &pm);
-                    file.unpack(&target_filename).unwrap();
-                    return;
-                }
-            }
-        }
-    }
-
-    warn!(
-        "Failed to find file \"{}\" inside archive",
-        &target_filename
-    );
 }
 
 fn make_re_target_filename(conf: &Config) -> Result<regex::Regex> {
@@ -1177,11 +1034,14 @@ mod tests {
             version_tag: Some("$.tag_name".to_string()),
             target_filename_to_extract_from_archive: Some("rg".to_string()),
             desired_filename: None,
+            commit: None,
+            commit_tag: None,
         };
         let out = extract_data_from_json(payload, &conf)?;
         let expected_hit = Hit {
             version : "13.0.0".to_string(),
-            download_url : "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-unknown-linux-musl.tar.gz".to_string()
+            download_url : "https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep-13.0.0-x86_64-unknown-linux-musl.tar.gz".to_string(),
+            commit: None,
         };
         assert_eq!(out, Some(expected_hit));
         Ok(())

@@ -84,11 +84,11 @@ jobs:
         build: [linux, linux-arm, macos, win-msvc, win32-msvc]
         include:
         - build: linux
-          os: ubuntu-18.04
+          os: ubuntu-22.04
           rust: stable
           target: x86_64-unknown-linux-musl
         - build: linux-arm
-          os: ubuntu-18.04
+          os: ubuntu-22.04
           rust: stable
           target: arm-unknown-linux-gnueabihf
         - build: macos
@@ -102,7 +102,7 @@ jobs:
           # This is currently broken due to ICE, prob too-old mingw 8.1
 #        - build: win-gnu
 #          os: windows-2019
-#          os: ubuntu-18.04
+#          os: ubuntu-22.04
 #          rust: stable
 #          target: x86_64-pc-windows-gnu
         - build: win32-msvc
@@ -122,7 +122,7 @@ jobs:
         fetch-depth: 1
 
     - name: Install packages (Ubuntu)
-      if: matrix.os == 'ubuntu-18.04'
+      if: matrix.os == 'ubuntu-22.04'
       run: |
         ci/ubuntu-install-packages
     - name: Install packages (macOS)
