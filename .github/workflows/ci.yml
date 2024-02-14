@@ -53,7 +53,7 @@ jobs:
         include:
         - build: pinned
           os: ubuntu-22.04
-          rust: 1.59.0
+          rust: 1.76.0
         - build: stable
           os: ubuntu-22.04
           rust: stable
