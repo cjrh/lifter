@@ -689,11 +689,13 @@ name = "lifter"
 version = "0.5.1"
 dependencies = [
  "anyhow",
+ "crossterm",
  "flate2",
  "itertools",
  "jsonpath-rust",
  "log",
  "paw",
+ "rand",
  "ratatui",
  "rayon",
  "regex",

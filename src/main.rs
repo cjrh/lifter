@@ -3,6 +3,18 @@ use itertools::Itertools;
 use log::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::io::stdout;
+
+use ratatui::{
+    prelude::{CrosstermBackend, Stylize, Terminal},
+    widgets::Paragraph,
+};
+
+use crossterm::{
+    event::{self, KeyCode, KeyEventKind},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
 
 #[derive(structopt::StructOpt)]
 #[structopt()]
@@ -51,70 +63,22 @@ fn main(args: Args) -> Result<()> {
 
     let current_dir = std::env::current_dir()?;
     let working_dir = args.working_dir.unwrap_or(current_dir);
-    std::env::set_current_dir(working_dir)?;
+    std::env::set_current_dir(&working_dir)?;
 
-    let p = std::path::PathBuf::from(args.configfile);
-    let filename = match p.exists() {
-        true => p.to_string_lossy().to_string(),
-        false => "lifter.ini".to_string(),
-    };
-    let conf = tini::Ini::from_file(&filename)?;
-    let sections_raw = conf.iter().collect_vec();
     let filters = args.filter.or_else(|| Some("".to_string())).unwrap();
     let filters = filters.split(',').map(|s| s.trim()).collect::<Vec<_>>();
 
-    // One of the sections in the .ini file could be a group of
-    // templates. A template is a collection of fields with
-    // default values. A "real" (non-template) section can
-    // refer to a template by name. When this happens, the
-    // fields in that template will get substituted into
-    // that section's values.
-    //
-    // Before we do anything, collect all the template sections
-    // and separate them out from the "real" sections
+    // Use the new scoped threads feature
+    use lifter::events::LifterEvent;
+    std::thread::scope(|scope| {
+        let (tx, rx) = std::sync::mpsc::channel::<LifterEvent>();
 
-    // This will hold the templates. The key is the name
-    // of the template and the value is another hashmap of
-    // each of the fields and field values within that template.
-    let mut templates = HashMap::new();
-    // This will hold the "real" sections
-    let mut sections = vec![];
-    sections_raw.into_iter().for_each(|(name, section)| {
-        if name.starts_with("template:") {
-            // This inner map (inside a particular template)
-            // will store each of the fields and values
-            // for that template.
-            debug!("Processing template: {}", name);
-            let mut inner_map = HashMap::new();
-            section.iter().for_each(|(field, value)| {
-                inner_map.insert(field.clone(), value.clone());
-            });
+        scope.spawn(|| -> Result<()> {
+            lifter::process_templates(&working_dir, &args.configfile, &filters, tx)
+        });
 
-            templates.insert(
-                name.strip_prefix("template:").unwrap().to_string(),
-                inner_map,
-            );
-        } else {
-            // This is not a template so move it into
-            // the "real" sections list; but, only if it is not
-            // being filtered out.
-            let included = filters.is_empty() || filters.iter().any(|f| name.contains(f));
-            if included {
-                debug!("Processing section: {}", name);
-                sections.push((name.clone(), section));
-            };
-        }
+        info!("Starting UI");
+        lifter::ui::ui_main(rx).unwrap();
     });
-    trace!("Detected templates: {:?}", templates);
-
-    sections.par_iter().for_each(|(section, _hm)| {
-        match lifter::run_section(section, &templates, &conf, &filename) {
-            Ok(_) => (),
-            Err(e) => {
-                error!("{}", e);
-            }
-        }
-    });
-
     Ok(())
 }

@@ -1,21 +1,6 @@
-//! # [Ratatui] Inline example
-//!
-//! The latest version of this example is available in the [examples] folder in the repository.
-//!
-//! Please note that the examples are designed to be run against the `main` branch of the Github
-//! repository. This means that you may not be able to compile with the latest release version on
-//! crates.io, or the one that you have installed locally.
-//!
-//! See the [examples readme] for more information on finding examples that match the version of the
-//! library you are using.
-//!
-//! [Ratatui]: https://github.com/ratatui-org/ratatui
-//! [examples]: https://github.com/ratatui-org/ratatui/blob/main/examples
-//! [examples readme]: https://github.com/ratatui-org/ratatui/blob/main/examples/README.md
-
+use anyhow::Result;
 use std::{
     collections::{BTreeMap, VecDeque},
-    error::Error,
     io,
     sync::mpsc,
     thread,
@@ -24,6 +9,8 @@ use std::{
 
 use rand::distributions::{Distribution, Uniform};
 use ratatui::{prelude::*, widgets::*};
+
+use std::sync::mpsc::{Receiver, Sender};
 
 const NUM_DOWNLOADS: usize = 10;
 
@@ -78,7 +65,7 @@ struct Worker {
     tx: mpsc::Sender<Download>,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+pub fn ui_main(backend_rx: Receiver<crate::events::LifterEvent>) -> Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
@@ -99,7 +86,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         w.tx.send(d).unwrap();
     }
 
-    run_app(&mut terminal, workers, downloads, rx)?;
+    run_app(&mut terminal, workers, downloads, rx, backend_rx)?;
 
     crossterm::terminal::disable_raw_mode()?;
     terminal.clear()?;
@@ -173,7 +160,8 @@ fn run_app<B: Backend>(
     workers: Vec<Worker>,
     mut downloads: Downloads,
     rx: mpsc::Receiver<Event>,
-) -> Result<(), Box<dyn Error>> {
+    rx_backend: Receiver<crate::events::LifterEvent>,
+) -> Result<()> {
     let mut redraw = true;
     loop {
         if redraw {
@@ -181,49 +169,84 @@ fn run_app<B: Backend>(
         }
         redraw = true;
 
-        match rx.recv()? {
-            Event::Input(event) => {
+        use crate::events::LifterEvent;
+
+        // match rx_backend.try_recv() {
+        //     Ok(crate::events::LifterEvent::Hello(i)) => {
+        //         terminal.insert_before(1, |buf| {
+        //             Paragraph::new(format!("Hello {}", i)).render(buf.area, buf);
+        //         })?;
+        //     }
+        //     Ok(crate::events::LifterEvent::Message(s)) => {
+        //         terminal.insert_before(1, |buf| {
+        //             Paragraph::new(s).render(buf.area, buf);
+        //         })?;
+        //     }
+        //     Err(mpsc::TryRecvError::Empty) => {}
+        //     Err(mpsc::TryRecvError::Disconnected) => break,
+        // }
+
+        match rx_backend.recv()? {
+            LifterEvent::Input(event) => {
                 if event.code == crossterm::event::KeyCode::Char('q') {
                     break;
                 }
             }
-            Event::Resize => {
+            LifterEvent::Resize => {
                 terminal.autoresize()?;
             }
-            Event::Tick => {}
-            Event::DownloadUpdate(worker_id, _download_id, progress) => {
-                let download = downloads.in_progress.get_mut(&worker_id).unwrap();
-                download.progress = progress;
-                redraw = false
-            }
-            Event::DownloadDone(worker_id, download_id) => {
-                let download = downloads.in_progress.remove(&worker_id).unwrap();
+            LifterEvent::Tick => {}
+            LifterEvent::Hello(i) => {
                 terminal.insert_before(1, |buf| {
-                    Paragraph::new(Line::from(vec![
-                        Span::from("Finished "),
-                        Span::styled(
-                            format!("download {download_id}"),
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::from(format!(
-                            " in {}ms",
-                            download.started_at.elapsed().as_millis()
-                        )),
-                    ]))
-                    .render(buf.area, buf);
+                    Paragraph::new(format!("Hello {}", i)).render(buf.area, buf);
                 })?;
-                match downloads.next(worker_id) {
-                    Some(d) => workers[worker_id].tx.send(d).unwrap(),
-                    None => {
-                        if downloads.in_progress.is_empty() {
-                            terminal.insert_before(1, |buf| {
-                                Paragraph::new("Done !").render(buf.area, buf);
-                            })?;
-                            break;
-                        }
-                    }
-                };
             }
+            LifterEvent::Message(s) => {
+                terminal.insert_before(1, |buf| {
+                    Paragraph::new(s).render(buf.area, buf);
+                })?;
+
+                downloads
+                    .in_progress
+                    .entry(0)
+                    .or_insert(DownloadInProgress {
+                        id: 0,
+                        started_at: Instant::now(),
+                        progress: 50.0,
+                    });
+            } // LifterEvent::DownloadUpdate(worker_id, _download_id, progress) => {
+              //     let download = downloads.in_progress.get_mut(&worker_id).unwrap();
+              //     download.progress = progress;
+              //     redraw = false
+              // }
+              // LifterEvent::DownloadDone(worker_id, download_id) => {
+              //     let download = downloads.in_progress.remove(&worker_id).unwrap();
+              //     terminal.insert_before(1, |buf| {
+              //         Paragraph::new(Line::from(vec![
+              //             Span::from("Finished "),
+              //             Span::styled(
+              //                 format!("download {download_id}"),
+              //                 Style::default().add_modifier(Modifier::BOLD),
+              //             ),
+              //             Span::from(format!(
+              //                 " in {}ms",
+              //                 download.started_at.elapsed().as_millis()
+              //             )),
+              //         ]))
+              //         .render(buf.area, buf);
+              //     })?;
+              //     match downloads.next(worker_id) {
+              //         Some(d) => workers[worker_id].tx.send(d).unwrap(),
+              //         None => {
+              //             if downloads.in_progress.is_empty() {
+              //                 terminal.insert_before(1, |buf| {
+              //                     Paragraph::new("Done !").render(buf.area, buf);
+              //                 })?;
+              //                 break;
+              //             }
+              //         }
+              //     };
+              // }
         };
     }
     Ok(())

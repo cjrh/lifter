@@ -1,4 +1,5 @@
-mod ui;
+pub mod events;
+pub mod ui;
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, Write};
@@ -10,6 +11,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use itertools::Itertools;
 use log::*;
+use rayon::prelude::*;
 use scraper::{Html, Selector};
 use strfmt::strfmt;
 use url::Url;
@@ -59,6 +61,79 @@ struct Hit {
     version: String,
     commit: Option<String>,
     download_url: String,
+}
+
+/// Process templates into formatted sections
+pub fn process_templates(
+    working_dir: &std::path::PathBuf,
+    configfile: &str,
+    filters: &[&str],
+    tx_ui: std::sync::mpsc::Sender<crate::events::LifterEvent>,
+) -> Result<()> {
+    std::env::set_current_dir(working_dir)?;
+
+    let p = std::path::PathBuf::from(configfile);
+    let filename = match p.exists() {
+        true => p.to_string_lossy().to_string(),
+        false => "lifter.ini".to_string(),
+    };
+
+    // One of the sections in the .ini file could be a group of
+    // templates. A template is a collection of fields with
+    // default values. A "real" (non-template) section can
+    // refer to a template by name. When this happens, the
+    // fields in that template will get substituted into
+    // that section's values.
+    //
+    // Before we do anything, collect all the template sections
+    // and separate them out from the "real" sections
+    let conf = tini::Ini::from_file(&filename)?;
+    let sections_raw = conf.iter().collect_vec();
+
+    // This will hold the templates. The key is the name
+    // of the template and the value is another hashmap of
+    // each of the fields and field values within that template.
+    let mut templates = HashMap::new();
+    // This will hold the "real" sections
+    let mut sections = vec![];
+    sections_raw.into_iter().for_each(|(name, section)| {
+        if name.starts_with("template:") {
+            // This inner map (inside a particular template)
+            // will store each of the fields and values
+            // for that template.
+            debug!("Processing template: {}", name);
+            let mut inner_map = HashMap::new();
+            section.iter().for_each(|(field, value)| {
+                inner_map.insert(field.clone(), value.clone());
+            });
+
+            templates.insert(
+                name.strip_prefix("template:").unwrap().to_string(),
+                inner_map,
+            );
+        } else {
+            // This is not a template so move it into
+            // the "real" sections list; but, only if it is not
+            // being filtered out.
+            let included = filters.is_empty() || filters.iter().any(|f| name.contains(f));
+            if included {
+                debug!("Processing section: {}", name);
+                sections.push((name.clone(), section));
+            };
+        }
+    });
+    trace!("Detected templates: {:?}", templates);
+
+    sections.par_iter().for_each(|(section, _hm)| {
+        match run_section(section, &templates, &conf, &filename, tx_ui.clone()) {
+            Ok(_) => (),
+            Err(e) => {
+                error!("{}", e);
+            }
+        }
+    });
+
+    Ok(())
 }
 
 /// Read a section of the config file (ini file) into a hashmap.
@@ -157,6 +232,7 @@ pub fn run_section(
     templates: &Templates,
     conf: &tini::Ini,
     filename: &str,
+    tx_ui: std::sync::mpsc::Sender<crate::events::LifterEvent>,
 ) -> Result<()> {
     let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
@@ -179,6 +255,10 @@ pub fn run_section(
         }
     };
     debug!("[{}] Processing: {}", section, &cf.page_url);
+    use crate::events::LifterEvent;
+    tx_ui
+        .send(LifterEvent::Message(section.to_string()))
+        .unwrap();
 
     if let Some(value) = tmp.get("anchor_tag") {
         cf.anchor_tag = strfmt(value, &tmp)?;
@@ -243,7 +323,10 @@ pub fn run_section(
         // TODO: actually need a mutex around the mutation of the config file.
         let conf_write = tini::Ini::from_file(&filename).unwrap();
         if let Some(new_commit) = hit.commit {
-            info!("[{}] Downloaded new version: {}:{}", section, &new_version, &new_commit);
+            info!(
+                "[{}] Downloaded new version: {}:{}",
+                section, &new_version, &new_commit
+            );
             conf_write
                 .section(section)
                 .item("version", &new_version)
@@ -300,7 +383,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
         // If a commit tag has been specified for this conf, we should check
         // that too. If the version tag is the same, and the commit hash
         // is merely different, we will also consider that as a new version.
-        if let Some(ref found_commit) = hit.commit  {
+        if let Some(ref found_commit) = hit.commit {
             debug!("Found commit: {found_commit}");
             if let Some(current_commit) = &conf.commit {
                 debug!("Current commit: {current_commit}");
@@ -379,6 +462,9 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
         }
     };
 
+
+    // Instructions for a progress bar
+    // https://gist.github.com/tgross35/06c8205ee46f330c32958f0db4971d65
     let resp = ureq::get(download_url)
             .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
             .call()?;
@@ -511,10 +597,7 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
     let version_str = item.as_str().unwrap_or("");
 
     let commit_str = if let Some(ctag) = &conf.commit_tag {
-        let finder = JsonPathFinder::from_str(
-            payload.as_ref(),
-            &ctag,
-        ).unwrap();
+        let finder = JsonPathFinder::from_str(payload.as_ref(), &ctag).unwrap();
         let item = &finder.find_slice()[0];
         let item = item.clone().to_data();
         let v = item.as_str().unwrap_or("");
