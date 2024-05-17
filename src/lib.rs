@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -12,6 +12,7 @@ use scraper::{Html, Selector};
 use strfmt::strfmt;
 use url::Url;
 
+mod btlog;
 mod gzfile;
 mod tarfile;
 mod tarxzfile;
@@ -408,12 +409,16 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
         // let mut od = output_dir.clone();
         // let outfilename = od.push(std::path::Path::new(&fname));
         let desired_filename = conf.desired_filename.as_ref().unwrap();
-        let mut output = std::fs::File::create(&desired_filename)?;
+        let tmp_filename = format!("{}.tmp", &desired_filename);
+
+        let mut output = std::fs::File::create(&tmp_filename)?;
         info!(
             "[{}] Saving {} to {}",
             section, &download_url, desired_filename
         );
         output.write_all(&buf)?;
+        // Now rename the file to the desired filename
+        std::fs::rename(tmp_filename, desired_filename)?;
     };
 
     if let Some(filename) = &conf.desired_filename {

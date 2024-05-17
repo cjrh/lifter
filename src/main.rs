@@ -1,3 +1,5 @@
+mod btlog;
+use crate::btlog::log_error_with_stack_trace;
 use anyhow::Result;
 use itertools::Itertools;
 use log::*;
@@ -117,7 +119,7 @@ fn main(args: Args) -> Result<()> {
         match lifter::run_section(section, &templates, &conf, &filename, &mutex) {
             Ok(_) => (),
             Err(e) => {
-                error!("{}", e);
+                log_error_with_stack_trace(format!("{}", e));
             }
         }
     });
