@@ -1,3 +1,10 @@
+> [!IMPORTANT]
+> This is an *alpha-quality hobby project*. I do use this
+> tool myself, but I started this project mainly to learn rust. While I
+> appreciate community input, I don't have much extra time to spend on this and
+> I'll be unresponsive to issue reports. I will however happily merge PRs with
+> improvements.
+
 # lifter
 
 Would you like to automatically download cool binaries like ripgrep,
@@ -28,12 +35,6 @@ lifter  noun    an athlete who lifts barbells
 Take your pick.  (By the way, `dictomatic` is another one of my
 hobby projects, and `lifter` will download that binary for you
 too.)
-
-> :warning: WARNING: This is an *alpha-quality hobby project*. I do use this
-> tool myself, but I started this project mainly to learn rust. While I
-> appreciate community input, I don't have much extra time to spend on this and
-> I'll be unresponsive to issue reports. I will however happily merge PRs with
-> improvements.
 
 ## Demo
 
