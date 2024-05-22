@@ -98,26 +98,22 @@ jobs:
           target: x86_64-pc-windows-gnu
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142
+      uses: step-security/harden-runner@f086349bfa2bd1361f7909c78558e816508cdc10
       with:
         egress-policy: block
         allowed-endpoints: >
-          github.com:443
-          ppa.launchpad.net:443
-          ppa.launchpad.net:80
-          packages.microsoft.com:443
           azure.archive.ubuntu.com:80
-          azure.archive.ubuntu.com:443
-          api.snapcraft.io:80
-          api.snapcraft.io:443
-          static.rust-lang.org:443
           crates.io:443
-          static.crates.io:443
-          registry-1.docker.io:443
-          auth.docker.io:443
-          production.cloudflare.docker.com:443
+          esm.ubuntu.com:443
           ghcr.io:443
+          github.com:443
           index.crates.io:443
+          motd.ubuntu.com:443
+          packages.microsoft.com:443
+          pkg-containers.githubusercontent.com:443
+          ppa.launchpadcontent.net:443
+          static.crates.io:443
+          static.rust-lang.org:443
 
     - name: Checkout repository
       uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v2
@@ -192,7 +188,7 @@ jobs:
     needs: dependency-scan
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v1
+      uses: step-security/harden-runner@f086349bfa2bd1361f7909c78558e816508cdc10 # v1
       with:
         egress-policy: block
         allowed-endpoints: >
@@ -216,7 +212,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v1
+      uses: step-security/harden-runner@f086349bfa2bd1361f7909c78558e816508cdc10 # v1
       with:
         egress-policy: block
         allowed-endpoints: >
@@ -249,7 +245,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142
+      uses: step-security/harden-runner@f086349bfa2bd1361f7909c78558e816508cdc10
       with:
         egress-policy: block
         allowed-endpoints: >
