@@ -110,7 +110,8 @@ jobs:
           registry-1.docker.io:443
           auth.docker.io:443
           production.cloudflare.docker.com:443
-          ghcr.io:443
+          ghcr.io
+          gcr.io
           index.crates.io:443
           objects.githubusercontent.com:443
 
