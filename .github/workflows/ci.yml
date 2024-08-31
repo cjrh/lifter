@@ -73,10 +73,6 @@ jobs:
           os: ubuntu-latest
           rust: stable
           target: armv7-unknown-linux-musleabi
-        - build: stable-powerpc64
-          os: ubuntu-latest
-          rust: stable
-          target: powerpc64-unknown-linux-gnu
         - build: stable-s390x
           os: ubuntu-latest
           rust: stable
