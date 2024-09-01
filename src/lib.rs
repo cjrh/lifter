@@ -533,7 +533,8 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
     };
 
     let path = JsonPath::from_str(&conf.anchor_tag)?;
-    let urls = path.find_slice(&data)
+    let urls = path
+        .find_slice(&data)
         .iter()
         .map(|v| v.clone().to_data().as_str().unwrap_or("").to_string())
         .collect::<Vec<String>>();
