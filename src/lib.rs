@@ -697,11 +697,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sqrt() {
-        assert!(true);
-    }
-
-    #[test]
     fn test_extract_data_from_json() -> Result<()> {
         // This is the payload returned from the github API
         let payload = r##"
