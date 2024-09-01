@@ -5,6 +5,10 @@ updates:
   schedule:
     interval: daily
     time: "19:00"
+  groups:
+    all:
+      patterns:
+        - "*"
   open-pull-requests-limit: 10
   ignore:
   - dependency-name: anyhow
