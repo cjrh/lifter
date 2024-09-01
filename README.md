@@ -367,12 +367,36 @@ version = 0.1.1
 
 ## Other alternatives
 
-A pre-existing project doing something very similar is
+### Huber
+
+If all you want is to download binaries from Github, then
+*Huber* is a probably a better choice than *lifter*.
+
+[Huber](https://github.com/innobead/huber) is a similar project that
+also uses the Github API to download binaries. It has a lot more
+features than *lifter*, and is more mature.
+
+Instead of a more general tool that is build around a "scraping"
+mindset, *Huber* focuses specifically on Github releases via the Github
+API. *Huber* makes it quite easy to list out various projects, and for
+each project to list the available versions, based on what is available
+on the Github Releases page for that project.
+
+*Huber* has a "managed" list of projects that it can download. I have
+been thinking about adding a similar feature to *lifter*, but I haven't
+done it yet. For now you have to manage your `lifter.config` yourself.
+
+Given that *Huber* exists, I'm going to focus lifter on being a more
+general tool that can download from any site, not just Github.
+
+### webinstall
+
+A pre-existing project doing something similar is
 [webinstall](https://github.com/webinstall/webi-installers). By comparison,
 *lifter*:
 - has fewer features
 - has fewer options
 - has fewer developers
 
-*lifter* needs only itself (binary) and the `lifter.config` file to
-work.
+*webinstall* is however more complex than *lifter*. *lifter* needs only 
+itself (binary) and the `lifter.config` file to work.
