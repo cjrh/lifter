@@ -57,7 +57,7 @@ jobs:
           # https://github.com/ossf/scorecard-action#publishing-results.
           # For private repositories, `publish_results` will automatically be set to `false`,
           # regardless of the value entered here.
-          publish_results: true
+          publish_results: false
 
       # Upload the results as artifacts (optional).
       - name: "Upload artifact"
