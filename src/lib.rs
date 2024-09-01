@@ -509,22 +509,22 @@ fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
 
 fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Option<Hit>> {
     // Extract from JSON
-    use jsonpath_rust::JsonPathFinder;
+    use jsonpath_rust::{JsonPath, JsonPathValue};
+    use serde_json::Value;
+    use std::str::FromStr;
+
+    let data = Value::from_str(payload.as_ref())?;
 
     let vtag = conf.version_tag.clone().unwrap();
-    let finder = JsonPathFinder::from_str(
-        payload.as_ref(),
-        &vtag,
-        // "$.first.second[?(@.active)]",
-    )
-    .unwrap();
-    let item = &finder.find_slice()[0];
+    let path = JsonPath::from_str(&vtag)?;
+    let item = &path.find_slice(&data)[0];
+
     let item = item.clone().to_data();
     let version_str = item.as_str().unwrap_or("");
 
     let commit_str = if let Some(ctag) = &conf.commit_tag {
-        let finder = JsonPathFinder::from_str(payload.as_ref(), &ctag).unwrap();
-        let item = &finder.find_slice()[0];
+        let path = JsonPath::from_str(ctag)?;
+        let item = &path.find_slice(&data)[0];
         let item = item.clone().to_data();
         let v = item.as_str().unwrap_or("");
         Some(v.to_string())
@@ -532,17 +532,13 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
         None
     };
 
-    let finder = JsonPathFinder::from_str(
-        payload.as_ref(),
-        &conf.anchor_tag,
-        // "$.first.second[?(@.active)]",
-    )
-    .unwrap();
-    let urls = finder
-        .find_slice()
+    let path = JsonPath::from_str(&conf.anchor_tag)?;
+    let urls = path
+        .find_slice(&data)
         .iter()
         .map(|v| v.clone().to_data().as_str().unwrap_or("").to_string())
         .collect::<Vec<String>>();
+
     let re_pat = regex::Regex::new(&conf.anchor_text)?;
 
     for u in urls {
