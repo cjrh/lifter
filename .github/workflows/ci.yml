@@ -111,6 +111,7 @@ jobs:
           objects.githubusercontent.com:443
           pkg-containers.githubusercontent.com:443
           static.rust-lang.org:443
+          bestpractices.dev:443
 
     - name: Checkout repository
       uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v2
