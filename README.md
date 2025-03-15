@@ -372,7 +372,8 @@ version = 0.1.1
 [Soar](https://github.com/pkgforge/soar) is a similar project that
 provides a CLI interface for downloading binaries. It also automates
 finding binaries. It is very extensive and is a much larger project
-than *lifter*.
+than *lifter*, and much more mature. You should probably use *soar*
+instead of *lifter*.
 
 From a design perspective, the primary difference between *lifter* 
 and *soar* is that *soar* maintains its own archive of binaries, while *lifter* downloads
