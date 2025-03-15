@@ -367,6 +367,27 @@ version = 0.1.1
 
 ## Other alternatives
 
+### Soar Package Manager
+
+[Soar](https://github.com/pkgforge/soar) is a similar project that
+provides a CLI interface for downloading binaries. It also automates
+finding binaries. It is very extensive and is a much larger project
+than *lifter*.
+
+From a design perspective, the primary difference between *lifter* 
+and *soar* is that *soar* maintains its own archive of binaries, while *lifter* downloads
+binaries directly from the github releases pages where the author
+of the package has posted the binaries. Often this comes from
+the CI of the project that the author has set up themselves.
+There are pros and cons to each approach. With *lifter*, you only have to trust the authors
+of the project you are downloading from, and I suppose you have to
+trust me, the author of *lifter*, because you are probably not going
+to read lifter source code. With *soar*, you have to trust the
+maintainers of the *soar* project to make sure that the binaries
+they are building are safe, since they rebuild all packages from source.
+In my opinion this trust is reasonable to give and the *soar* project 
+appears to be well-maintained. But overall, that's the difference.
+
 ### Huber
 
 If all you want is to download binaries from Github, then
