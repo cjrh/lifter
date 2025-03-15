@@ -39,7 +39,7 @@ jobs:
         include:
         - build: pinned
           os: ubuntu-latest
-          rust: 1.74.0
+          rust: 1.85.0
         - build: stable
           os: ubuntu-latest
           rust: stable
@@ -258,6 +258,7 @@ jobs:
           github.com:443
           pkg-containers.githubusercontent.com:443
           objects.githubusercontent.com:443
+          mirror.gcr.io:443
 
     - name: Checkout the code
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v2
