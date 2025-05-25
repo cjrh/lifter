@@ -187,6 +187,7 @@ fn worker_loop(
             }
         }
     });
+    tx.send(lifter::event::ProgressEvent::NoMoreWork).unwrap();
 }
 
 fn draw_ui<B: ratatui::backend::Backend>(
