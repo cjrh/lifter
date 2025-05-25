@@ -17,6 +17,7 @@ mod gzfile;
 mod tarfile;
 mod tarxzfile;
 mod zipfile;
+pub mod event;
 
 /// This struct represents a particular artifact that will
 /// be downloaded.
@@ -162,6 +163,7 @@ pub fn run_section(
     conf: &tini::Ini,
     filename: &str,
     config_write_mutex: &std::sync::Mutex<()>,
+    tx: std::sync::mpsc::Sender<event::ProgressEvent>,
 ) -> Result<()> {
     let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
