@@ -17,6 +17,7 @@ mod gzfile;
 mod tarfile;
 mod tarxzfile;
 mod zipfile;
+pub mod event;
 
 /// Build an HTTP agent that surfaces every response (including 4xx/5xx) as
 /// `Ok(Response)` so the retry loops can inspect the body on error statuses
@@ -173,6 +174,7 @@ pub fn run_section(
     conf: &tini::Ini,
     filename: &str,
     config_write_mutex: &std::sync::Mutex<()>,
+    tx: std::sync::mpsc::Sender<event::ProgressEvent>,
 ) -> Result<()> {
     let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
