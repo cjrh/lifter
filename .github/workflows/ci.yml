@@ -115,7 +115,7 @@ jobs:
           release-assets.githubusercontent.com:443
 
     - name: Checkout repository
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v2
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
 
     - name: Install packages (Ubuntu)
       if: matrix.os == 'ubuntu-22.04'
@@ -201,7 +201,7 @@ jobs:
           static.rust-lang.org:443
 
     - name: Checkout repository
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v2
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
     - name: Install Rust
       uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
       with:
@@ -228,7 +228,7 @@ jobs:
           static.rust-lang.org:443
 
     - name: Checkout repository
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v2
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
     - name: Install Rust
       uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
       with:
@@ -263,7 +263,7 @@ jobs:
           check.trivy.dev:443
 
     - name: Checkout the code
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v2
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
       with:
         fetch-depth: 0
         persist-credentials: false
