@@ -529,35 +529,34 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
     let data = Value::from_str(payload.as_ref())?;
 
     let vtag = conf.version_tag.clone().unwrap();
-    let path = JsonPath::from_str(&vtag)?;
-    let item = &path.find_slice(&data)[0];
-
-    let item = item.clone().to_data();
-    let version_str = item.as_str().unwrap_or("");
+    let version_str = data
+        .query(&vtag)?
+        .first()
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     let commit_str = if let Some(ctag) = &conf.commit_tag {
-        let path = JsonPath::from_str(ctag)?;
-        let item = &path.find_slice(&data)[0];
-        let item = item.clone().to_data();
-        let v = item.as_str().unwrap_or("");
-        Some(v.to_string())
+        data.query(ctag)?
+            .first()
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     } else {
         None
     };
 
-    let path = JsonPath::from_str(&conf.anchor_tag)?;
-    let urls = path
-        .find_slice(&data)
-        .iter()
-        .map(|v| v.clone().to_data().as_str().unwrap_or("").to_string())
-        .collect::<Vec<String>>();
+    let urls: Vec<String> = data
+        .query(&conf.anchor_tag)?
+        .into_iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .collect();
 
     let re_pat = regex::Regex::new(&conf.anchor_text)?;
 
     for u in urls {
         if re_pat.is_match(&u) {
             return Ok(Some(Hit {
-                version: version_str.to_string(),
+                version: version_str,
                 commit: commit_str,
                 download_url: u,
             }));
