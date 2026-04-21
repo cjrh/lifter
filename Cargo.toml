@@ -10,6 +10,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 opt-level = 'z'
+strip = "symbols"
 
 [dependencies]
 scraper = "0.26.0"
