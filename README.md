@@ -101,6 +101,27 @@ $ ./lifter 2>/dev/null \
     >> CHANGELOG
 ```
 
+#### Logging doesn't get in the way
+
+All `-v` / `-vv` / `-vvv` diagnostic output goes to **stderr**, so it never
+contaminates the CSV on stdout. You can crank verbosity all the way up and
+still pipe cleanly — stderr shows up on your terminal, stdout flows into
+the next stage of the pipeline:
+
+```bash
+$ ./lifter -vv | awk -F, '$2==1'
+INFO - [ripgrep] Downloading version 14.1.0
+INFO - [ripgrep] Downloaded new version: 14.1.0
+INFO - [ripgrep Windows] Downloading version 14.1.0
+INFO - [ripgrep Windows] Downloaded new version: 14.1.0
+2026-04-21T14:23:49Z,1,ripgrep,rg,13.0.0,14.1.0
+2026-04-21T14:23:52Z,1,ripgrep Windows,rg.exe,13.0.0,14.1.0
+```
+
+(The `INFO` lines are stderr — your terminal interleaves them, but the
+`awk` on the other side of the pipe only sees stdout.) Redirect stderr to
+a file to separate cleanly: `./lifter -vv 2>lifter.log | awk ...`.
+
 Unlike most package managers like *apt*, *scoop*, *brew*, *chocolatey*
 and many others that focus on a single operating system, *lifter* can
 download binaries for multiple operating
