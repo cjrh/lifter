@@ -14,9 +14,68 @@ use url::Url;
 
 mod btlog;
 mod gzfile;
+pub mod reporter;
 mod tarfile;
 mod tarxzfile;
 mod zipfile;
+
+use crate::btlog::log_error_with_stack_trace;
+use crate::reporter::{OutputRecord, Reporter};
+
+/// Shared, per-run state passed into every parallel `run_section` call.
+/// `config_write` serializes writes to the INI file (tini has no
+/// concurrency story). `reporter` serializes rows on stdout.
+pub struct RunContext {
+    pub config_write: std::sync::Mutex<()>,
+    pub reporter: Reporter,
+}
+
+impl RunContext {
+    pub fn new() -> Self {
+        RunContext {
+            config_write: std::sync::Mutex::new(()),
+            reporter: Reporter::new(),
+        }
+    }
+}
+
+impl Default for RunContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Result of processing one section. This carries enough context that
+/// the caller can report what was *observed* remotely even when no
+/// download happened — which is the whole point of the CSV output.
+enum Outcome {
+    /// A new artifact was downloaded this run.
+    Updated {
+        version: String,
+        commit: Option<String>,
+    },
+    /// The remote version was found and is not newer than what's on disk.
+    UpToDate { version: String },
+    /// The remote scrape produced no match at all.
+    NoHit,
+    /// A version was found but the download URL's extension isn't one we handle.
+    ExtUnsupported { version: String },
+}
+
+impl Outcome {
+    fn was_updated(&self) -> bool {
+        matches!(self, Outcome::Updated { .. })
+    }
+
+    fn current_version(&self) -> Option<&str> {
+        match self {
+            Outcome::Updated { version, .. }
+            | Outcome::UpToDate { version }
+            | Outcome::ExtUnsupported { version } => Some(version.as_str()),
+            Outcome::NoHit => None,
+        }
+    }
+}
 
 /// Build an HTTP agent that surfaces every response (including 4xx/5xx) as
 /// `Ok(Response)` so the retry loops can inspect the body on error statuses
@@ -167,13 +226,62 @@ fn insert_fields_from_template(
     Ok(())
 }
 
+/// Process one section. Always emits exactly one CSV row on
+/// `ctx.reporter`, even on error (stderr still carries the stack
+/// trace). Returns `Ok(())` unconditionally so one failing section
+/// doesn't poison the `rayon` iterator.
 pub fn run_section(
     section: &str,
     templates: &Templates,
     conf: &tini::Ini,
     filename: &str,
-    config_write_mutex: &std::sync::Mutex<()>,
-) -> Result<()> {
+    ctx: &RunContext,
+) {
+    // `previous_version` and `file_name` need to survive into the
+    // error branch, so track them outside the Result.
+    let mut previous_version: Option<String> = None;
+    let mut file_name: Option<String> = None;
+
+    let result = run_section_inner(
+        section,
+        templates,
+        conf,
+        filename,
+        ctx,
+        &mut previous_version,
+        &mut file_name,
+    );
+
+    let (was_updated, current_version) = match &result {
+        Ok(outcome) => (
+            outcome.was_updated(),
+            outcome.current_version().map(String::from),
+        ),
+        Err(e) => {
+            log_error_with_stack_trace(format!("{}", e));
+            (false, None)
+        }
+    };
+
+    ctx.reporter.emit(&OutputRecord {
+        was_updated,
+        tool_name: section.to_string(),
+        file_name,
+        previous_version,
+        current_version,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_section_inner(
+    section: &str,
+    templates: &Templates,
+    conf: &tini::Ini,
+    filename: &str,
+    ctx: &RunContext,
+    previous_version: &mut Option<String>,
+    file_name: &mut Option<String>,
+) -> Result<Outcome> {
     let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
     insert_fields_from_template(&mut cf, templates, &tmp)?;
@@ -183,14 +291,12 @@ pub fn run_section(
         Some(p) => cf.page_url = p.clone(),
         None => {
             if cf.page_url.is_empty() {
-                return {
-                    warn!(
-                        "[{}] Section {} is missing required field \
-                         \"page_url\"",
-                        section, section
-                    );
-                    Ok(())
-                };
+                warn!(
+                    "[{}] Section {} is missing required field \
+                     \"page_url\"",
+                    section, section
+                );
+                return Ok(Outcome::NoHit);
             }
         }
     };
@@ -245,41 +351,39 @@ pub fn run_section(
         cf.target_filename_to_extract_from_archive.clone()
     };
 
-    // Finally time to actually do some processing. Here we call
-    // out to a function, and if we get something back, it means
-    // we found and processed a new version. This section will
-    // then update the config file with the new version.
-    // TODO: would be useful to collect things that changed,
-    //   and what versions they changed from/to.
-    if let Some(hit) = process(section, &mut cf)? {
-        // New version, must update the version number in the
-        // config file.
-        let new_version = hit.version;
+    // Publish the two fields needed for the CSV row now that
+    // substitutions are done. They remain accurate even on error paths
+    // after this point.
+    *previous_version = cf.version.clone();
+    *file_name = cf.desired_filename.clone();
 
-        let _lock = config_write_mutex.lock().unwrap();
+    let outcome = process(section, &mut cf)?;
+
+    if let Outcome::Updated { version, commit } = &outcome {
+        let _lock = ctx.config_write.lock().unwrap();
         let conf_write = tini::Ini::from_file(&filename).unwrap();
-        if let Some(new_commit) = hit.commit {
+        if let Some(new_commit) = commit {
             info!(
                 "[{}] Downloaded new version: {}:{}",
-                section, &new_version, &new_commit
+                section, &version, new_commit
             );
             conf_write
                 .section(section)
-                .item("version", &new_version)
-                .item("commit", &new_commit)
+                .item("version", version)
+                .item("commit", new_commit)
                 .to_file(&filename)
                 .unwrap();
         } else {
-            info!("[{}] Downloaded new version: {}", section, &new_version);
+            info!("[{}] Downloaded new version: {}", section, &version);
             conf_write
                 .section(section)
-                .item("version", &new_version)
+                .item("version", version)
                 .to_file(&filename)
                 .unwrap();
         }
         debug!("[{}] Updated config file.", section);
     }
-    Ok(())
+    Ok(outcome)
 }
 
 fn target_file_already_exists(conf: &Config) -> bool {
@@ -294,7 +398,7 @@ fn target_file_already_exists(conf: &Config) -> bool {
     Path::new(&filename_to_check).exists()
 }
 
-fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
+fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
     let url = &conf.page_url;
 
     let parse_result = match conf.method.as_str() {
@@ -304,17 +408,19 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
 
     let hit = match parse_result {
         Some(hit) => hit,
-        None => return Ok(None),
+        None => return Ok(Outcome::NoHit),
     };
 
     let existing_version = conf.version.as_ref().unwrap();
     // TODO: must compare each of the components of the version string as integers.
     if target_file_already_exists(conf) && &hit.version < existing_version {
-        info!(
+        debug!(
             "[{}] Found version is not newer: {}; Skipping.",
             section, &hit.version
         );
-        return Ok(None);
+        return Ok(Outcome::UpToDate {
+            version: hit.version,
+        });
     } else if target_file_already_exists(conf) && &hit.version == existing_version {
         // If a commit tag has been specified for this conf, we should check
         // that too. If the version tag is the same, and the commit hash
@@ -324,11 +430,13 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
             if let Some(current_commit) = &conf.commit {
                 debug!("Current commit: {current_commit}");
                 if found_commit == current_commit {
-                    info!(
+                    debug!(
                         "[{}] Found version {}:{} is not newer than existing version {}:{}; Skipping.",
                         section, &hit.version, found_commit, &existing_version, current_commit
                     );
-                    return Ok(None);
+                    return Ok(Outcome::UpToDate {
+                        version: hit.version,
+                    });
                 }
             }
             // Reaching here means there was no commit current in the config file.
@@ -337,11 +445,13 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
         } else {
             // If the commit tag wasn't configured, nor found when
             // scanning, we treat that as the commit not being different.
-            info!(
+            debug!(
                 "[{}] Found version {} is not newer than existing version {}; Skipping.",
                 section, &hit.version, &existing_version
             );
-            return Ok(None);
+            return Ok(Outcome::UpToDate {
+                version: hit.version,
+            });
         };
     }
 
@@ -387,14 +497,18 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
                     "[{}] Failed to match known file extensions. Skipping.",
                     section
                 );
-                return Ok(None);
+                return Ok(Outcome::ExtUnsupported {
+                    version: hit.version,
+                });
             }
         } else {
             warn!(
                 "[{}] Failed to match known file extensions. Skipping.",
                 section
             );
-            return Ok(None);
+            return Ok(Outcome::ExtUnsupported {
+                version: hit.version,
+            });
         }
     };
 
@@ -439,7 +553,10 @@ fn process(section: &str, conf: &mut Config) -> Result<Option<Hit>> {
         }
     }
 
-    Ok(Some(hit))
+    Ok(Outcome::Updated {
+        version: hit.version,
+        commit: hit.commit,
+    })
 }
 
 /// Change file permissions to be executable. This only happens on
