@@ -1,7 +1,6 @@
-mod btlog;
-use crate::btlog::log_error_with_stack_trace;
 use anyhow::Result;
 use itertools::Itertools;
+use lifter::RunContext;
 use log::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -109,19 +108,14 @@ fn main(args: Args) -> Result<()> {
     });
     trace!("Detected templates: {:?}", templates);
 
-    // Let's make a mutex and pass it to each of the `run_section()` calls
-    // that will run in separate threads. The mutex will be used to avoid
-    // collisions when writing updates to the config file.
-    use std::sync::Mutex;
-    let mutex = Mutex::new(());
+    // Shared per-run state: one mutex guarding INI writes, one
+    // serializing CSV rows on stdout. `run_section` emits its own CSV
+    // row per section (including on error) and logs errors to stderr,
+    // so the caller has nothing to do with the return value.
+    let ctx = RunContext::new();
 
     sections.par_iter().for_each(|(section, _hm)| {
-        match lifter::run_section(section, &templates, &conf, &filename, &mutex) {
-            Ok(_) => (),
-            Err(e) => {
-                log_error_with_stack_trace(format!("{}", e));
-            }
-        }
+        lifter::run_section(section, &templates, &conf, &filename, &ctx);
     });
 
     Ok(())

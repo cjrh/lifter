@@ -45,38 +45,60 @@ use the example one in this repo.
 $ ls -lh | rg lifter
 .rwxrwxr-x  6.9M caleb  2 Apr 12:27  lifter
 .rw-rw-r--   14k caleb  2 Apr 14:41  lifter.config
-$ ./lifter -vv
-INFO - [thesauromatic.exe] Found a match on versions tag: Alpha, includes bumpversion
-INFO - [thesauromatic.exe] Found version is not newer: Alpha, includes bumpversion; Skipping.
-INFO - [tokei] Found a match on versions tag: v12.1.2
-INFO - [tokei] Found version is not newer: v12.1.2; Skipping.
-INFO - [ncspot] Found a match on versions tag: v0.7.3
-INFO - [ncspot] Found version is not newer: v0.7.3; Skipping.
-INFO - [starship.exe] Found a match on versions tag: v0.55.0
-INFO - [starship.exe] Found version is not newer: v0.55.0; Skipping.
-INFO - [caddy] Found a match on versions tag: v2.4.3
-INFO - [caddy] Found version is not newer: v2.4.3; Skipping.
-INFO - [gitea] Found a match on versions tag: v1.14.3
-INFO - [gitea] Found version is not newer: v1.14.3; Skipping.
-INFO - [ripgrep] Found a match on versions tag: 13.0.0
-INFO - [ripgrep] Found version is not newer: 13.0.0; Skipping.
-INFO - [sd] Found a match on versions tag: v0.7.6
-INFO - [sd] Found version is not newer: v0.7.6; Skipping.
-INFO - [fzf] Found a match on versions tag: 0.27.2
-INFO - [fzf] Found version is not newer: 0.27.2; Skipping.
-INFO - [bat] Found a match on versions tag: v0.18.1
-INFO - [bat] Found version is not newer: v0.18.1; Skipping.
-INFO - [fcp] Found a match on versions tag: v0.1.0
-INFO - [fcp] Found version is not newer: v0.1.0; Skipping.
-INFO - [ripgrep Windows] Found a match on versions tag: 13.0.0
-INFO - [ripgrep Windows] Found version is not newer: 13.0.0; Skipping.
-INFO - [dictomatic] Found a match on versions tag: First release
-INFO - [dictomatic] Found version is not newer: First release; Skipping.
+$ ./lifter
+2026-04-21T14:23:45Z,0,thesauromatic.exe,thesauromatic.exe,Alpha,Alpha
+2026-04-21T14:23:46Z,0,tokei,tokei,v12.1.2,v12.1.2
+2026-04-21T14:23:46Z,0,ncspot,ncspot,v0.7.3,v0.7.3
+2026-04-21T14:23:47Z,0,starship.exe,starship.exe,v0.55.0,v0.55.0
+2026-04-21T14:23:47Z,0,caddy,caddy,v2.4.3,v2.4.3
+2026-04-21T14:23:48Z,0,gitea,gitea,v1.14.3,v1.14.3
+2026-04-21T14:23:49Z,1,ripgrep,rg,13.0.0,14.1.0
+2026-04-21T14:23:49Z,0,sd,sd,v0.7.6,v0.7.6
+2026-04-21T14:23:50Z,0,fzf,fzf,0.27.2,0.27.2
+2026-04-21T14:23:50Z,0,bat,bat,v0.18.1,v0.18.1
+2026-04-21T14:23:51Z,0,fcp,fcp,v0.1.0,v0.1.0
+2026-04-21T14:23:52Z,1,ripgrep Windows,rg.exe,13.0.0,14.1.0
+2026-04-21T14:23:53Z,0,dictomatic,dictomatic,First release,First release
 ...
 $ ls -l | rg rg
 .rwxr-xr-x  5.5M caleb  8 Feb  0:26  rg
 .rwxrwxr-x  5.1M caleb  8 Feb  0:26  rg.exe
 ...
+```
+
+### Output format
+
+`lifter` writes diagnostic logs to **stderr** (controlled with `-v`/`-vv`/`-q`)
+and one CSV row per config section to **stdout**. The CSV has no header; the
+columns are:
+
+```
+timestamp,was_updated,tool_name,file_name,previous_version,current_version
+```
+
+- `timestamp`: UTC RFC 3339, second precision (`YYYY-MM-DDTHH:MM:SSZ`).
+- `was_updated`: `1` if a new artifact was downloaded this run, `0` otherwise.
+- `tool_name`: the config section name.
+- `file_name`: the file that was written (or would be, if it were updated).
+- `previous_version`: what was recorded in `lifter.config` before this run.
+- `current_version`: what was found on the remote this run (blank if the
+  scrape found nothing).
+
+This makes `lifter` trivially pipeable. To see only tools that were updated
+this run:
+
+```bash
+$ ./lifter 2>/dev/null | awk -F, '$2==1'
+2026-04-21T14:23:49Z,1,ripgrep,rg,13.0.0,14.1.0
+2026-04-21T14:23:52Z,1,ripgrep Windows,rg.exe,13.0.0,14.1.0
+```
+
+Or to append updates to a changelog:
+
+```bash
+$ ./lifter 2>/dev/null \
+    | awk -F, '$2==1 { printf("%s  %s: %s -> %s\n", $1, $3, $5, $6) }' \
+    >> CHANGELOG
 ```
 
 Unlike most package managers like *apt*, *scoop*, *brew*, *chocolatey*
