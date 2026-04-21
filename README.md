@@ -465,3 +465,53 @@ A pre-existing project doing something similar is
 
 *webinstall* is however more complex than *lifter*. *lifter* needs only 
 itself (binary) and the `lifter.config` file to work.
+
+## Releasing
+
+Note to future-me: cutting a release is one command.
+
+```bash
+cargo install cargo-release  # one-time
+cargo release patch --execute  # or `minor`, `major`, or a literal `X.Y.Z`
+```
+
+That invocation:
+
+1. Bumps `version` in `Cargo.toml` and `Cargo.lock`.
+2. Commits the bump.
+3. Creates a git tag matching the new version, bare (e.g. `0.5.2`, no `v` prefix) — configured via `[package.metadata.release]` in `Cargo.toml`, which is what the release workflow's tag filter expects.
+4. Pushes the commit and tag to `origin`.
+5. Skips crates.io publish (not a library; `publish = false` in the same metadata block).
+
+Drop `--execute` to see a dry run first.
+
+### What CI does when the tag arrives
+
+A push matching `[0-9]+.[0-9]+.[0-9]+` triggers `.github/workflows/release.yml`. It runs a single `build-release` matrix job across five targets:
+
+| target                         | runner         | archive                                          |
+| ------------------------------ | -------------- | ------------------------------------------------ |
+| `x86_64-unknown-linux-musl`    | `ubuntu-22.04` | `lifter-X.Y.Z-x86_64-unknown-linux-musl.tar.gz`  |
+| `arm-unknown-linux-gnueabihf`  | `ubuntu-22.04` | `lifter-X.Y.Z-arm-unknown-linux-gnueabihf.tar.gz`|
+| `x86_64-apple-darwin`          | `macos-latest` | `lifter-X.Y.Z-x86_64-apple-darwin.tar.gz`        |
+| `x86_64-pc-windows-msvc`       | `windows-2022` | `lifter-X.Y.Z-x86_64-pc-windows-msvc.zip`        |
+| `i686-pc-windows-msvc`         | `windows-2022` | `lifter-X.Y.Z-i686-pc-windows-msvc.zip`          |
+
+`cross` is only installed for the ARM target (pre-built binary, pinned via `CROSS_VERSION`); the other four targets build natively on their runners. Binaries are stripped automatically by `strip = "symbols"` in the release profile, so there's no explicit strip step.
+
+Each matrix leg, on success, calls `softprops/action-gh-release` with the tag name. The first leg to finish creates the GitHub Release; subsequent legs attach their archive to the same release. `fail-fast: false` means if one target fails, the others still upload.
+
+Action versions are SHA-pinned; dependabot (`.github/dependabot.yml`, `github-actions` ecosystem) bumps them on a daily schedule, so no manual maintenance is expected.
+
+### If a release goes sideways
+
+If a matrix leg fails and you want to retry cleanly:
+
+```bash
+git tag -d X.Y.Z                    # delete local tag
+git push origin :refs/tags/X.Y.Z    # delete remote tag
+gh release delete X.Y.Z             # if the release was already created
+# fix the problem, then re-run `cargo release`
+```
+
+To re-run only the failed target without cutting a new tag, re-run the failed matrix leg from the GitHub Actions UI. If the leg failed *before* the upload step this just works; if it failed *during* upload and left a partial asset, delete that asset from the release page first (`softprops/action-gh-release` refuses to overwrite existing assets by default).

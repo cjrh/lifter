@@ -12,6 +12,13 @@ panic = "abort"
 opt-level = 'z'
 strip = "symbols"
 
+[package.metadata.release]
+# Match existing bare-semver tags (e.g. `0.5.2`, no `v` prefix) so the
+# release workflow trigger in .github/workflows/release.yml fires.
+tag-name = "{{version}}"
+# Not a library — don't push to crates.io.
+publish = false
+
 [dependencies]
 scraper = "0.26.0"
 regex = "1.6.0"
