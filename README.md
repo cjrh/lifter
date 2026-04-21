@@ -73,11 +73,11 @@ and one CSV row per config section to **stdout**. The CSV has no header; the
 columns are:
 
 ```
-timestamp,was_updated,tool_name,file_name,previous_version,current_version
+timestamp,updated,tool_name,file_name,previous_version,current_version
 ```
 
 - `timestamp`: UTC RFC 3339, second precision (`YYYY-MM-DDTHH:MM:SSZ`).
-- `was_updated`: `1` if a new artifact was downloaded this run, `0` otherwise.
+- `updated`: `1` if a new artifact was downloaded this run, `0` otherwise.
 - `tool_name`: the config section name.
 - `file_name`: the file that was written (or would be, if it were updated).
 - `previous_version`: what was recorded in `lifter.config` before this run.

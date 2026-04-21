@@ -5,8 +5,46 @@ use log::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
+const LONG_ABOUT: &str = "\
+Download single-file binaries from GitHub Releases (and other sites) listed in
+a lifter.config file, skipping downloads when the cached version is already
+up to date.
+
+Diagnostic logs are written to stderr; one CSV row per config section is
+written to stdout, with columns:
+
+    timestamp,updated,tool_name,file_name,previous_version,current_version
+
+Because stdout is pure CSV, lifter composes cleanly with awk / grep / etc.
+
+EXAMPLES:
+    # Run with the default config file (./lifter.config).
+    lifter
+
+    # Show only tools that were updated this run (updated == 1). Logs go to
+    # stderr, so the pipe to awk sees only CSV rows.
+    lifter | awk -F, '$2==1'
+
+    # Append a changelog entry for every updated tool.
+    lifter | awk -F, '$2==1 { printf(\"%s  %s: %s -> %s\\n\", $1, $3, $5, $6) }' \\
+        >> CHANGELOG
+
+    # Crank verbosity but keep the pipe clean by sending logs to a file.
+    lifter -vv 2>lifter.log | awk -F, '$2==1'
+
+    # Run 8 downloads in parallel, restricted to a couple of sections.
+    lifter -vv -x 8 -f ripgrep,fzf
+
+    # A GitHub token raises the API rate limit, and is effectively required
+    # for configs with many github_api_latest entries.
+    GITHUB_TOKEN=ghp_xxxxxxxxxxxx lifter -vv
+";
+
 #[derive(structopt::StructOpt)]
-#[structopt()]
+#[structopt(
+    about = "Download single-file binaries from GitHub Releases and similar sites.",
+    long_about = LONG_ABOUT,
+)]
 struct Args {
     /// Silence all output
     #[structopt(short = "q", long = "quiet")]
@@ -17,11 +55,10 @@ struct Args {
     /// Timestamp (sec, ms, ns, none)
     #[structopt(short = "t", long = "timestamp")]
     ts: Option<stderrlog::Timestamp>,
-    /// Verbose mode (-v, -vv, -vvv, etc)
-    #[structopt(parse(from_os_str), short = "w", long = "working-dir")]
     // TODO: should use XDG_CONFIG style locations for config
     /// Output directory. By default, the same directory
     /// that the lifter binary is in.
+    #[structopt(parse(from_os_str), short = "w", long = "working-dir")]
     working_dir: Option<std::path::PathBuf>,
     /// The config file to use for the download definitions
     #[structopt(short = "c", long = "config-file", default_value = "lifter.config")]
@@ -29,6 +66,7 @@ struct Args {
     /// Only run these names. Comma separated.
     #[structopt(short = "f", long = "filter")]
     filter: Option<String>,
+    /// Number of parallel download workers
     #[structopt(short = "x", long = "threads", default_value = "1")]
     threads: usize,
 }

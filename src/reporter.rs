@@ -5,7 +5,7 @@
 //! this channel is for tooling. The six columns are:
 //!
 //! ```text
-//! timestamp,was_updated,tool_name,file_name,previous_version,current_version
+//! timestamp,updated,tool_name,file_name,previous_version,current_version
 //! ```
 //!
 //! `timestamp` is UTC RFC 3339, second precision (`YYYY-MM-DDTHH:MM:SSZ`).
@@ -24,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// bails before `desired_filename` is resolved). `current_version` is
 /// `Option` because we may not have reached the remote at all.
 pub struct OutputRecord {
-    pub was_updated: bool,
+    pub updated: bool,
     pub tool_name: String,
     pub file_name: Option<String>,
     pub previous_version: Option<String>,
@@ -71,7 +71,7 @@ fn format_row(timestamp: &str, r: &OutputRecord) -> String {
     let mut buf = String::with_capacity(128);
     append_field(&mut buf, timestamp);
     buf.push(',');
-    append_field(&mut buf, if r.was_updated { "1" } else { "0" });
+    append_field(&mut buf, if r.updated { "1" } else { "0" });
     buf.push(',');
     append_field(&mut buf, &r.tool_name);
     buf.push(',');
@@ -150,14 +150,14 @@ mod tests {
     const TS: &str = "2026-04-21T12:00:00Z";
 
     fn rec(
-        was_updated: bool,
+        updated: bool,
         tool: &str,
         file: Option<&str>,
         prev: Option<&str>,
         curr: Option<&str>,
     ) -> OutputRecord {
         OutputRecord {
-            was_updated,
+            updated,
             tool_name: tool.to_string(),
             file_name: file.map(String::from),
             previous_version: prev.map(String::from),

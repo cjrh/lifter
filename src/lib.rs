@@ -63,7 +63,7 @@ enum Outcome {
 }
 
 impl Outcome {
-    fn was_updated(&self) -> bool {
+    fn updated(&self) -> bool {
         matches!(self, Outcome::Updated { .. })
     }
 
@@ -252,9 +252,9 @@ pub fn run_section(
         &mut file_name,
     );
 
-    let (was_updated, current_version) = match &result {
+    let (updated, current_version) = match &result {
         Ok(outcome) => (
-            outcome.was_updated(),
+            outcome.updated(),
             outcome.current_version().map(String::from),
         ),
         Err(e) => {
@@ -264,7 +264,7 @@ pub fn run_section(
     };
 
     ctx.reporter.emit(&OutputRecord {
-        was_updated,
+        updated,
         tool_name: section.to_string(),
         file_name,
         previous_version,
