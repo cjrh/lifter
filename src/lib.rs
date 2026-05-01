@@ -1264,20 +1264,14 @@ mod tests {
         target_filename_to_extract_from_archive = rg
         version = 13.0.0
         */
-        // `extract_data_from_json` only reads version_tag, anchor_tag,
-        // anchor_text, and (optionally) commit_tag — extraction targets
-        // aren't exercised here.
+        // Only the fields actually read by `extract_data_from_json`
+        // need to be set; the rest fall through to `Default` so
+        // future `Config` fields don't break this test.
         let conf = Config {
-            method: "api_json".to_string(),
-            template: "github_api_latest".to_string(),
-            version: Some("13.0.0".to_string()),
-            page_url: "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest".to_string(),
             anchor_tag: "$.assets.*.browser_download_url".to_string(),
             anchor_text: r"ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz".to_string(),
             version_tag: Some("$.tag_name".to_string()),
-            commit: None,
-            commit_tag: None,
-            extraction_targets: Vec::new(),
+            ..Default::default()
         };
         let out = extract_data_from_json(payload, &conf)?;
         let expected_hit = Hit {
@@ -1409,5 +1403,194 @@ mod tests {
             file_name_for_report(&targets).as_deref(),
             Some("rg;doc/rg.1")
         );
+    }
+
+    // -------- archive-layer integration tests --------
+    //
+    // The extractors write to the current working directory via
+    // `tar::Entry::unpack` and `std::fs::File::create`. Tests below
+    // run inside a fresh tempdir, serialized by a process-wide mutex
+    // so cargo's parallel test runner can't race on `set_current_dir`.
+
+    use std::sync::Mutex;
+
+    /// RAII: locks the global CWD mutex, cd's into a fresh tempdir,
+    /// and restores the previous CWD when dropped. Recovers from
+    /// poisoned mutexes (a panic in another test) so a single failing
+    /// test doesn't cascade.
+    struct CwdGuard {
+        prev: std::path::PathBuf,
+        _temp: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn new() -> Self {
+            static LOCK: Mutex<()> = Mutex::new(());
+            let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let temp = tempfile::tempdir().unwrap();
+            let prev = std::env::current_dir().unwrap();
+            std::env::set_current_dir(temp.path()).unwrap();
+            CwdGuard {
+                prev,
+                _temp: temp,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
+
+    fn build_test_tar(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_path(name).unwrap();
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, *data).unwrap();
+        }
+        builder.into_inner().unwrap()
+    }
+
+    fn build_test_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zw = zip::ZipWriter::new(buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, data) in entries {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(data).unwrap();
+        }
+        zw.finish().unwrap().into_inner()
+    }
+
+    fn make_conf_from_ini(section: &str, pairs: &[(&str, &str)]) -> Config {
+        let tmp: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let mut conf = Config::new();
+        conf.extraction_targets = build_extraction_targets(section, &tmp).unwrap();
+        conf
+    }
+
+    #[test]
+    fn extract_targets_from_tar_pulls_each_listed_file_under_original_basename() {
+        let _cwd = CwdGuard::new();
+
+        let tar_bytes = build_test_tar(&[
+            ("rg", b"binary"),
+            ("doc/rg.1", b"manpage"),
+            ("complete/rg.bash", b"completion"),
+            ("README.md", b"unwanted"),
+        ]);
+
+        let conf = make_conf_from_ini(
+            "ripgrep",
+            &[(
+                "target_filenames_to_extract_from_archive",
+                r#"["rg", "rg.1", "rg.bash"]"#,
+            )],
+        );
+
+        let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+
+        let written_set: std::collections::HashSet<String> = written.into_iter().collect();
+        assert_eq!(written_set.len(), 3);
+        assert!(written_set.contains("rg"));
+        assert!(written_set.contains("rg.1"));
+        assert!(written_set.contains("rg.bash"));
+
+        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
+        assert_eq!(std::fs::read("rg.1").unwrap(), b"manpage");
+        assert_eq!(std::fs::read("rg.bash").unwrap(), b"completion");
+        assert!(!std::path::Path::new("README.md").exists());
+    }
+
+    #[test]
+    fn extract_targets_from_tar_renames_in_singular_mode() {
+        let _cwd = CwdGuard::new();
+
+        let tar_bytes = build_test_tar(&[("fcp-1.0-x86_64-unknown-linux-gnu", b"binary")]);
+
+        let conf = make_conf_from_ini(
+            "fcp",
+            &[
+                (
+                    "target_filename_to_extract_from_archive",
+                    "fcp-1.0-x86_64-unknown-linux-gnu",
+                ),
+                ("desired_filename", "fcp"),
+            ],
+        );
+
+        let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+
+        assert_eq!(written, vec!["fcp".to_string()]);
+        assert_eq!(std::fs::read("fcp").unwrap(), b"binary");
+        assert!(!std::path::Path::new("fcp-1.0-x86_64-unknown-linux-gnu").exists());
+    }
+
+    #[test]
+    fn extract_targets_from_tar_warns_but_succeeds_when_a_target_is_missing() {
+        let _cwd = CwdGuard::new();
+
+        let tar_bytes = build_test_tar(&[("rg", b"binary")]);
+        let conf = make_conf_from_ini(
+            "ripgrep",
+            &[(
+                "target_filenames_to_extract_from_archive",
+                r#"["rg", "missing-from-archive"]"#,
+            )],
+        );
+
+        let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+
+        // Only the matching target produces output; the missing one
+        // is logged but doesn't fail the run.
+        assert_eq!(written, vec!["rg".to_string()]);
+        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
+    }
+
+    #[test]
+    fn extract_target_from_zipfile_pulls_each_listed_file() {
+        let _cwd = CwdGuard::new();
+
+        let mut zip_bytes = build_test_zip(&[
+            ("rg", b"binary"),
+            ("doc/rg.1", b"manpage"),
+            ("complete/rg.bash", b"completion"),
+            ("README.md", b"unwanted"),
+        ]);
+
+        let conf = make_conf_from_ini(
+            "ripgrep",
+            &[(
+                "target_filenames_to_extract_from_archive",
+                r#"["rg", "rg.1", "rg.bash"]"#,
+            )],
+        );
+
+        let written = crate::zipfile::extract_target_from_zipfile(&mut zip_bytes, &conf).unwrap();
+
+        let written_set: std::collections::HashSet<String> = written.into_iter().collect();
+        assert_eq!(written_set.len(), 3);
+        assert!(written_set.contains("rg"));
+        assert!(written_set.contains("rg.1"));
+        assert!(written_set.contains("rg.bash"));
+
+        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
+        assert_eq!(std::fs::read("rg.1").unwrap(), b"manpage");
+        assert_eq!(std::fs::read("rg.bash").unwrap(), b"completion");
+        assert!(!std::path::Path::new("README.md").exists());
     }
 }
