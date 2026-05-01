@@ -14,6 +14,7 @@
 
 use crate::{Config, ExtractionTarget};
 use log::{debug, warn};
+use std::path::{Path, PathBuf};
 
 pub(crate) struct TargetState<'a> {
     pub target: &'a ExtractionTarget,
@@ -55,15 +56,16 @@ pub(crate) fn warn_unfulfilled(state: &[TargetState]) {
 
 /// Walk a tar archive (already wrapped in whatever decompressor the
 /// caller needs), extracting one file per `ExtractionTarget` in
-/// `conf`. Returns the on-disk paths actually written. Unfulfilled
-/// targets are warned about; an unreadable entry is logged and skipped
-/// rather than failing the whole archive.
+/// `conf` into `output_dir`. Returns the on-disk paths actually
+/// written. Unfulfilled targets are warned about; an unreadable
+/// entry is logged and skipped rather than failing the whole archive.
 pub(crate) fn extract_targets_from_tar<R: std::io::Read>(
     archive: &mut tar::Archive<R>,
     conf: &Config,
-) -> Vec<String> {
+    output_dir: &Path,
+) -> Vec<PathBuf> {
     let mut state = init_target_states(conf);
-    let mut written: Vec<String> = Vec::new();
+    let mut written: Vec<PathBuf> = Vec::new();
 
     let entries = match archive.entries() {
         Ok(e) => e,
@@ -100,19 +102,15 @@ pub(crate) fn extract_targets_from_tar<R: std::io::Read>(
         let Some(slot) = first_unfulfilled_match(&mut state, &basename) else {
             continue;
         };
-        let out_name = slot
-            .target
-            .rename_to
-            .as_deref()
-            .unwrap_or(&basename)
-            .to_string();
-        debug!("tar, Got a match: {} -> {}", &basename, &out_name);
-        if let Err(e) = file.unpack(&out_name) {
-            warn!("Failed to unpack {}: {}", &out_name, e);
+        let out_name = slot.target.rename_to.as_deref().unwrap_or(&basename);
+        let out_path = output_dir.join(out_name);
+        debug!("tar, Got a match: {} -> {}", &basename, out_path.display());
+        if let Err(e) = file.unpack(&out_path) {
+            warn!("Failed to unpack {}: {}", out_path.display(), e);
             continue;
         }
         slot.fulfilled = true;
-        written.push(out_name);
+        written.push(out_path);
     }
 
     warn_unfulfilled(&state);

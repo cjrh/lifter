@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -273,6 +273,7 @@ pub fn run_section(
     templates: &Templates,
     conf: &tini::Ini,
     filename: &str,
+    output_dir: &Path,
     ctx: &RunContext,
 ) {
     // `previous_version` and `file_name` need to survive into the
@@ -285,6 +286,7 @@ pub fn run_section(
         templates,
         conf,
         filename,
+        output_dir,
         ctx,
         &mut previous_version,
         &mut file_name,
@@ -316,6 +318,7 @@ fn run_section_inner(
     templates: &Templates,
     conf: &tini::Ini,
     filename: &str,
+    output_dir: &Path,
     ctx: &RunContext,
     previous_version: &mut Option<String>,
     file_name: &mut Option<String>,
@@ -371,7 +374,7 @@ fn run_section_inner(
     *previous_version = cf.version.clone();
     *file_name = file_name_for_report(&cf.extraction_targets);
 
-    let outcome = process(section, &mut cf)?;
+    let outcome = process(section, &mut cf, output_dir)?;
 
     if let Outcome::Updated { version, commit } = &outcome {
         let _lock = ctx.config_write.lock().unwrap();
@@ -505,20 +508,20 @@ fn file_name_for_report(targets: &[ExtractionTarget]) -> Option<String> {
     }
 }
 
-/// True when every target's predicted output already exists on disk —
-/// i.e. there's nothing the up-to-date check needs to refresh. In
-/// plural mode this is conservative: a single missing file forces a
-/// re-download of all of them, which is fine since they all come out
-/// of the same archive.
-fn target_file_already_exists(conf: &Config) -> bool {
+/// True when every target's predicted output already exists in
+/// `output_dir` — i.e. there's nothing the up-to-date check needs to
+/// refresh. In plural mode this is conservative: a single missing
+/// file forces a re-download of all of them, which is fine since
+/// they all come out of the same archive.
+fn target_file_already_exists(conf: &Config, output_dir: &Path) -> bool {
     !conf.extraction_targets.is_empty()
         && conf
             .extraction_targets
             .iter()
-            .all(|t| Path::new(t.predicted_output_name()).exists())
+            .all(|t| output_dir.join(t.predicted_output_name()).exists())
 }
 
-fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
+fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Outcome> {
     let url = &conf.page_url;
 
     let parse_result = match conf.method.as_str() {
@@ -533,7 +536,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
 
     let existing_version = conf.version.as_ref().unwrap();
     // TODO: must compare each of the components of the version string as integers.
-    if target_file_already_exists(conf) && &hit.version < existing_version {
+    if target_file_already_exists(conf, output_dir) && &hit.version < existing_version {
         debug!(
             "[{}] Found version is not newer: {}; Skipping.",
             section, &hit.version
@@ -541,7 +544,7 @@ fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
         return Ok(Outcome::UpToDate {
             version: hit.version,
         });
-    } else if target_file_already_exists(conf) && &hit.version == existing_version {
+    } else if target_file_already_exists(conf, output_dir) && &hit.version == existing_version {
         // If a commit tag has been specified for this conf, we should check
         // that too. If the version tag is the same, and the commit hash
         // is merely different, we will also consider that as a new version.
@@ -639,14 +642,14 @@ fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
     let mut buf: Vec<u8> = Vec::new();
     reader.read_to_end(&mut buf)?;
 
-    let extracted: Vec<String> = if ext == ".tar.xz" {
-        tarxzfile::extract_target_from_tarxz(&mut buf, conf)
+    let extracted: Vec<PathBuf> = if ext == ".tar.xz" {
+        tarxzfile::extract_target_from_tarxz(&mut buf, conf, output_dir)
     } else if ext == ".zip" {
-        zipfile::extract_target_from_zipfile(&mut buf, conf)?
+        zipfile::extract_target_from_zipfile(&mut buf, conf, output_dir)?
     } else if ext == ".tar.gz" {
-        tarfile::extract_target_from_tarfile(&mut buf, conf)
+        tarfile::extract_target_from_tarfile(&mut buf, conf, output_dir)
     } else if ext == ".gz" {
-        gzfile::extract_target_from_gzfile(section, &buf, conf)?
+        gzfile::extract_target_from_gzfile(section, &buf, conf, output_dir)?
     } else if vec![".exe", "", ".com", ".appimage", ".AppImage"].contains(&ext) {
         // Single-file downloads (Windows executables, AppImages,
         // bare binaries) aren't archives — there's nothing to match
@@ -660,23 +663,25 @@ fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
             )
         })?;
         let desired_filename = target.rename_to.as_ref().unwrap();
-        let tmp_filename = format!("{}.tmp", &desired_filename);
+        let dest = output_dir.join(desired_filename);
+        let tmp_dest = output_dir.join(format!("{}.tmp", desired_filename));
 
-        let mut output = std::fs::File::create(&tmp_filename)?;
+        let mut output = std::fs::File::create(&tmp_dest)?;
         info!(
             "[{}] Saving {} to {}",
-            section, &download_url, desired_filename
+            section,
+            &download_url,
+            dest.display()
         );
         output.write_all(&buf)?;
-        std::fs::rename(tmp_filename, desired_filename)?;
-        vec![desired_filename.clone()]
+        std::fs::rename(&tmp_dest, &dest)?;
+        vec![dest]
     } else {
         Vec::new()
     };
 
     if ext != ".exe" {
         for path in &extracted {
-            // TODO: this must be updated to handle output_dir
             set_executable(path)?;
         }
     }
@@ -690,17 +695,20 @@ fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
 /// Change file permissions to be executable. This only happens on
 /// posix; on Windows it does nothing.
 #[cfg(target_family = "unix")]
-fn set_executable(filename: &str) -> Result<()> {
-    let mut perms = std::fs::metadata(&filename)?.permissions();
+fn set_executable(path: &Path) -> Result<()> {
+    let mut perms = std::fs::metadata(path)?.permissions();
     if perms.mode() & 0o111 == 0 {
-        debug!("File {} is not yet executable, setting bits.", filename);
+        debug!(
+            "File {} is not yet executable, setting bits.",
+            path.display()
+        );
         perms.set_mode(0o755);
-        std::fs::set_permissions(&filename, perms)?;
+        std::fs::set_permissions(path, perms)?;
     }
     Ok(())
 }
 #[cfg(not(target_family = "unix"))]
-fn set_executable(filename: &str) -> Result<()> {
+fn set_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -1407,43 +1415,9 @@ mod tests {
 
     // -------- archive-layer integration tests --------
     //
-    // The extractors write to the current working directory via
-    // `tar::Entry::unpack` and `std::fs::File::create`. Tests below
-    // run inside a fresh tempdir, serialized by a process-wide mutex
-    // so cargo's parallel test runner can't race on `set_current_dir`.
-
-    use std::sync::Mutex;
-
-    /// RAII: locks the global CWD mutex, cd's into a fresh tempdir,
-    /// and restores the previous CWD when dropped. Recovers from
-    /// poisoned mutexes (a panic in another test) so a single failing
-    /// test doesn't cascade.
-    struct CwdGuard {
-        prev: std::path::PathBuf,
-        _temp: tempfile::TempDir,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl CwdGuard {
-        fn new() -> Self {
-            static LOCK: Mutex<()> = Mutex::new(());
-            let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let temp = tempfile::tempdir().unwrap();
-            let prev = std::env::current_dir().unwrap();
-            std::env::set_current_dir(temp.path()).unwrap();
-            CwdGuard {
-                prev,
-                _temp: temp,
-                _lock: lock,
-            }
-        }
-    }
-
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.prev);
-        }
-    }
+    // Extractors take an explicit `output_dir`, so each test just
+    // creates its own tempdir and passes it in. No process-wide CWD
+    // gymnastics needed.
 
     fn build_test_tar(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut builder = tar::Builder::new(Vec::new());
@@ -1482,8 +1456,7 @@ mod tests {
 
     #[test]
     fn extract_targets_from_tar_pulls_each_listed_file_under_original_basename() {
-        let _cwd = CwdGuard::new();
-
+        let dir = tempfile::tempdir().unwrap();
         let tar_bytes = build_test_tar(&[
             ("rg", b"binary"),
             ("doc/rg.1", b"manpage"),
@@ -1500,24 +1473,26 @@ mod tests {
         );
 
         let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
-        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf, dir.path());
 
-        let written_set: std::collections::HashSet<String> = written.into_iter().collect();
+        let written_set: std::collections::HashSet<PathBuf> = written.into_iter().collect();
         assert_eq!(written_set.len(), 3);
-        assert!(written_set.contains("rg"));
-        assert!(written_set.contains("rg.1"));
-        assert!(written_set.contains("rg.bash"));
+        assert!(written_set.contains(&dir.path().join("rg")));
+        assert!(written_set.contains(&dir.path().join("rg.1")));
+        assert!(written_set.contains(&dir.path().join("rg.bash")));
 
-        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
-        assert_eq!(std::fs::read("rg.1").unwrap(), b"manpage");
-        assert_eq!(std::fs::read("rg.bash").unwrap(), b"completion");
-        assert!(!std::path::Path::new("README.md").exists());
+        assert_eq!(std::fs::read(dir.path().join("rg")).unwrap(), b"binary");
+        assert_eq!(std::fs::read(dir.path().join("rg.1")).unwrap(), b"manpage");
+        assert_eq!(
+            std::fs::read(dir.path().join("rg.bash")).unwrap(),
+            b"completion"
+        );
+        assert!(!dir.path().join("README.md").exists());
     }
 
     #[test]
     fn extract_targets_from_tar_renames_in_singular_mode() {
-        let _cwd = CwdGuard::new();
-
+        let dir = tempfile::tempdir().unwrap();
         let tar_bytes = build_test_tar(&[("fcp-1.0-x86_64-unknown-linux-gnu", b"binary")]);
 
         let conf = make_conf_from_ini(
@@ -1532,17 +1507,16 @@ mod tests {
         );
 
         let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
-        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf, dir.path());
 
-        assert_eq!(written, vec!["fcp".to_string()]);
-        assert_eq!(std::fs::read("fcp").unwrap(), b"binary");
-        assert!(!std::path::Path::new("fcp-1.0-x86_64-unknown-linux-gnu").exists());
+        assert_eq!(written, vec![dir.path().join("fcp")]);
+        assert_eq!(std::fs::read(dir.path().join("fcp")).unwrap(), b"binary");
+        assert!(!dir.path().join("fcp-1.0-x86_64-unknown-linux-gnu").exists());
     }
 
     #[test]
     fn extract_targets_from_tar_warns_but_succeeds_when_a_target_is_missing() {
-        let _cwd = CwdGuard::new();
-
+        let dir = tempfile::tempdir().unwrap();
         let tar_bytes = build_test_tar(&[("rg", b"binary")]);
         let conf = make_conf_from_ini(
             "ripgrep",
@@ -1553,18 +1527,17 @@ mod tests {
         );
 
         let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
-        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf, dir.path());
 
         // Only the matching target produces output; the missing one
         // is logged but doesn't fail the run.
-        assert_eq!(written, vec!["rg".to_string()]);
-        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
+        assert_eq!(written, vec![dir.path().join("rg")]);
+        assert_eq!(std::fs::read(dir.path().join("rg")).unwrap(), b"binary");
     }
 
     #[test]
     fn extract_target_from_zipfile_pulls_each_listed_file() {
-        let _cwd = CwdGuard::new();
-
+        let dir = tempfile::tempdir().unwrap();
         let mut zip_bytes = build_test_zip(&[
             ("rg", b"binary"),
             ("doc/rg.1", b"manpage"),
@@ -1580,17 +1553,21 @@ mod tests {
             )],
         );
 
-        let written = crate::zipfile::extract_target_from_zipfile(&mut zip_bytes, &conf).unwrap();
+        let written =
+            crate::zipfile::extract_target_from_zipfile(&mut zip_bytes, &conf, dir.path()).unwrap();
 
-        let written_set: std::collections::HashSet<String> = written.into_iter().collect();
+        let written_set: std::collections::HashSet<PathBuf> = written.into_iter().collect();
         assert_eq!(written_set.len(), 3);
-        assert!(written_set.contains("rg"));
-        assert!(written_set.contains("rg.1"));
-        assert!(written_set.contains("rg.bash"));
+        assert!(written_set.contains(&dir.path().join("rg")));
+        assert!(written_set.contains(&dir.path().join("rg.1")));
+        assert!(written_set.contains(&dir.path().join("rg.bash")));
 
-        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
-        assert_eq!(std::fs::read("rg.1").unwrap(), b"manpage");
-        assert_eq!(std::fs::read("rg.bash").unwrap(), b"completion");
-        assert!(!std::path::Path::new("README.md").exists());
+        assert_eq!(std::fs::read(dir.path().join("rg")).unwrap(), b"binary");
+        assert_eq!(std::fs::read(dir.path().join("rg.1")).unwrap(), b"manpage");
+        assert_eq!(
+            std::fs::read(dir.path().join("rg.bash")).unwrap(),
+            b"completion"
+        );
+        assert!(!dir.path().join("README.md").exists());
     }
 }

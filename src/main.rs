@@ -90,7 +90,12 @@ fn main(args: Args) -> Result<()> {
 
     let current_dir = std::env::current_dir()?;
     let working_dir = args.working_dir.unwrap_or(current_dir);
-    std::env::set_current_dir(working_dir)?;
+    // Keep the CWD aligned with `working_dir` so the INI file lookup
+    // below (which is a relative path by default) finds the config in
+    // the expected place. The downloads themselves no longer rely on
+    // CWD — they're written to `working_dir` explicitly via
+    // `run_section`.
+    std::env::set_current_dir(&working_dir)?;
 
     let p = std::path::PathBuf::from(args.configfile);
     let filename = match p.exists() {
@@ -153,7 +158,7 @@ fn main(args: Args) -> Result<()> {
     let ctx = RunContext::new();
 
     sections.par_iter().for_each(|(section, _hm)| {
-        lifter::run_section(section, &templates, &conf, &filename, &ctx);
+        lifter::run_section(section, &templates, &conf, &filename, &working_dir, &ctx);
     });
 
     Ok(())
