@@ -1,31 +1,33 @@
 use crate::Config;
-use std::io::{Read, Seek, Write};
+use anyhow::{anyhow, Result};
+use std::io::{Read, Write};
 
-pub fn extract_target_from_gzfile(compressed: &mut [u8], conf: &Config) {
-    let mut cbuf = std::io::Cursor::new(compressed);
-    let mut archive = flate2::read::GzDecoder::new(&mut cbuf);
+/// A `.gz` file (as opposed to `.tar.gz`) is a single compressed
+/// file: there's no archive member to match against, so the plural
+/// `target_filenames_to_extract_from_archive` form makes no sense
+/// here. We require the singular form (which always sets `rename_to`)
+/// and write the decompressed bytes there.
+pub fn extract_target_from_gzfile(
+    section: &str,
+    compressed: &[u8],
+    conf: &Config,
+) -> Result<Vec<String>> {
+    let target = conf.singular_target().ok_or_else(|| {
+        anyhow!(
+            "[{}] target_filenames_to_extract_from_archive cannot be used \
+             with a `.gz` download (single-file format, nothing to match)",
+            section
+        )
+    })?;
+    let dest = target
+        .rename_to
+        .as_deref()
+        .expect("singular_target guarantees rename_to is Some");
 
-    let target_filename = conf.desired_filename.as_ref().expect(
-        "To extract from an archive, a target filename must be supplied using the \
-        parameter \"target_filename_to_extract_from_archive\" in the config file.",
-    );
-
-    // If it's only `.gz` (and not `.tar.gz`) then it's a single file, so we don't
-    // worry about trying to match a regex, just save whatever is there into the
-    // `desired_filename`.
-
-    let mut buf = vec![];
-    archive.read_to_end(&mut buf).unwrap();
-    match std::fs::File::create(target_filename) {
-        Ok(mut file) => {
-            file.seek(std::io::SeekFrom::Start(0)).unwrap();
-            file.write_all(&buf).unwrap();
-        }
-        Err(e) => {
-            eprintln!("Failed to create file {}: {}", &target_filename, e);
-        }
-    }
-    // let mut file = std::fs::File::create(target_filename).unwrap();
-    // file.seek(std::io::SeekFrom::Start(0)).unwrap();
-    // file.write_all(&buf).unwrap();
+    let cbuf = std::io::Cursor::new(compressed);
+    let mut decoder = flate2::read::GzDecoder::new(cbuf);
+    let mut buf = Vec::new();
+    decoder.read_to_end(&mut buf)?;
+    std::fs::File::create(dest)?.write_all(&buf)?;
+    Ok(vec![dest.to_string()])
 }
