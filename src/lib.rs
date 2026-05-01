@@ -18,6 +18,8 @@ mod gzfile;
 pub mod reporter;
 mod tarfile;
 mod tarxzfile;
+#[cfg(test)]
+mod testutil;
 mod zipfile;
 
 use crate::btlog::log_error_with_stack_trace;
@@ -264,6 +266,19 @@ fn insert_fields_from_template(
     Ok(())
 }
 
+/// All the read-only inputs `run_section_inner` needs. Bundled into
+/// a struct so the inner signature stays manageable as the pipeline
+/// grows (this is also where a future `dry_run` or
+/// `concurrency_limit` flag would slot in).
+struct SectionInputs<'a> {
+    section: &'a str,
+    templates: &'a Templates,
+    conf: &'a tini::Ini,
+    filename: &'a str,
+    output_dir: &'a Path,
+    ctx: &'a RunContext,
+}
+
 /// Process one section. Always emits exactly one CSV row on
 /// `ctx.reporter`, even on error (stderr still carries the stack
 /// trace). Returns `Ok(())` unconditionally so one failing section
@@ -276,21 +291,21 @@ pub fn run_section(
     output_dir: &Path,
     ctx: &RunContext,
 ) {
-    // `previous_version` and `file_name` need to survive into the
-    // error branch, so track them outside the Result.
-    let mut previous_version: Option<String> = None;
-    let mut file_name: Option<String> = None;
-
-    let result = run_section_inner(
+    let inputs = SectionInputs {
         section,
         templates,
         conf,
         filename,
         output_dir,
         ctx,
-        &mut previous_version,
-        &mut file_name,
-    );
+    };
+
+    // `previous_version` and `file_name` need to survive into the
+    // error branch, so track them outside the Result.
+    let mut previous_version: Option<String> = None;
+    let mut file_name: Option<String> = None;
+
+    let result = run_section_inner(&inputs, &mut previous_version, &mut file_name);
 
     let (updated, current_version) = match &result {
         Ok(outcome) => (
@@ -312,17 +327,20 @@ pub fn run_section(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_section_inner(
-    section: &str,
-    templates: &Templates,
-    conf: &tini::Ini,
-    filename: &str,
-    output_dir: &Path,
-    ctx: &RunContext,
+    inputs: &SectionInputs<'_>,
     previous_version: &mut Option<String>,
     file_name: &mut Option<String>,
 ) -> Result<Outcome> {
+    let SectionInputs {
+        section,
+        templates,
+        conf,
+        filename,
+        output_dir,
+        ctx,
+    } = *inputs;
+
     let tmp = read_section_into_map(conf, section);
     let mut cf = Config::new();
     insert_fields_from_template(&mut cf, templates, &tmp)?;
@@ -378,7 +396,7 @@ fn run_section_inner(
 
     if let Outcome::Updated { version, commit } = &outcome {
         let _lock = ctx.config_write.lock().unwrap();
-        let conf_write = tini::Ini::from_file(&filename).unwrap();
+        let conf_write = tini::Ini::from_file(filename).unwrap();
         if let Some(new_commit) = commit {
             info!(
                 "[{}] Downloaded new version: {}:{}",
@@ -388,14 +406,14 @@ fn run_section_inner(
                 .section(section)
                 .item("version", version)
                 .item("commit", new_commit)
-                .to_file(&filename)
+                .to_file(filename)
                 .unwrap();
         } else {
             info!("[{}] Downloaded new version: {}", section, &version);
             conf_write
                 .section(section)
                 .item("version", version)
-                .to_file(&filename)
+                .to_file(filename)
                 .unwrap();
         }
         debug!("[{}] Updated config file.", section);
@@ -1417,42 +1435,9 @@ mod tests {
     //
     // Extractors take an explicit `output_dir`, so each test just
     // creates its own tempdir and passes it in. No process-wide CWD
-    // gymnastics needed.
+    // gymnastics needed. Fixture builders live in `crate::testutil`.
 
-    fn build_test_tar(entries: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut builder = tar::Builder::new(Vec::new());
-        for (name, data) in entries {
-            let mut header = tar::Header::new_gnu();
-            header.set_size(data.len() as u64);
-            header.set_path(name).unwrap();
-            header.set_mode(0o644);
-            header.set_cksum();
-            builder.append(&header, *data).unwrap();
-        }
-        builder.into_inner().unwrap()
-    }
-
-    fn build_test_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
-        use std::io::Write;
-        let buf = std::io::Cursor::new(Vec::new());
-        let mut zw = zip::ZipWriter::new(buf);
-        let opts = zip::write::SimpleFileOptions::default();
-        for (name, data) in entries {
-            zw.start_file(*name, opts).unwrap();
-            zw.write_all(data).unwrap();
-        }
-        zw.finish().unwrap().into_inner()
-    }
-
-    fn make_conf_from_ini(section: &str, pairs: &[(&str, &str)]) -> Config {
-        let tmp: HashMap<String, String> = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        let mut conf = Config::new();
-        conf.extraction_targets = build_extraction_targets(section, &tmp).unwrap();
-        conf
-    }
+    use crate::testutil::{build_test_tar, build_test_zip, make_conf_from_ini};
 
     #[test]
     fn extract_targets_from_tar_pulls_each_listed_file_under_original_basename() {
