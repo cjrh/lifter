@@ -12,6 +12,7 @@ use scraper::{Html, Selector};
 use strfmt::strfmt;
 use url::Url;
 
+mod archive;
 mod btlog;
 mod gzfile;
 pub mod reporter;
@@ -88,6 +89,32 @@ fn http_agent() -> ureq::Agent {
         .into()
 }
 
+/// One file the user wants out of an archive.
+///
+/// `pattern` matches against the basename of an archive entry.
+/// `rename_to` is the destination filename on disk:
+///   - `Some(name)` — write the matched entry to `name` (singular mode).
+///   - `None` — write it under its original archive basename (plural mode).
+/// `pattern_str` is the raw, uncompiled pattern, kept around for
+/// "does this file already exist on disk?" checks where we treat the
+/// pattern as a literal filename (the realistic case for plural mode).
+#[derive(Debug)]
+struct ExtractionTarget {
+    pattern_str: String,
+    pattern: regex::Regex,
+    rename_to: Option<String>,
+}
+
+impl ExtractionTarget {
+    /// Best-effort guess at the on-disk output name without inspecting
+    /// the archive. For singular mode that's `rename_to`; for plural
+    /// mode we treat the pattern as a literal filename, which is the
+    /// expected use of the plural form.
+    fn predicted_output_name(&self) -> &str {
+        self.rename_to.as_deref().unwrap_or(&self.pattern_str)
+    }
+}
+
 /// This struct represents a particular artifact that will
 /// be downloaded.
 #[derive(Default, Debug)]
@@ -114,16 +141,27 @@ struct Config {
     /// as a disambiguator.
     commit_tag: Option<String>,
     commit: Option<String>,
-    /// Target filename inside archive. Leave blank if download is not an archive.
-    target_filename_to_extract_from_archive: Option<String>,
-    /// After download/extraction, rename file to this
-    desired_filename: Option<String>,
+    /// One or more files to pull out of the downloaded archive.
+    /// Singular mode produces exactly one entry (with `rename_to` set);
+    /// plural mode produces N entries with `rename_to == None`.
+    extraction_targets: Vec<ExtractionTarget>,
 }
 
 impl Config {
     fn new() -> Config {
         Config {
             ..Default::default()
+        }
+    }
+
+    /// The single extraction target if this config was built in
+    /// singular mode (one target with an explicit `rename_to`). Used to
+    /// gate non-archive downloads (.exe / .gz / .com / .AppImage),
+    /// which only make sense in singular mode.
+    fn singular_target(&self) -> Option<&ExtractionTarget> {
+        match self.extraction_targets.as_slice() {
+            [t] if t.rename_to.is_some() => Some(t),
+            _ => None,
         }
     }
 }
@@ -318,21 +356,7 @@ fn run_section_inner(
         cf.commit_tag = Some(strfmt(value, &tmp)?);
     };
 
-    cf.target_filename_to_extract_from_archive =
-        if let Some(value) = tmp.get("target_filename_to_extract_from_archive") {
-            // The target filename parameter is present, so we'll use
-            // that. However, it must also be substituted with the
-            // current vars, in case it contains any template params.
-            Some(strfmt(value, &tmp)?)
-        } else {
-            // The default filename to look for inside the archive
-            // is the name of the section. For example, if the name
-            // of the section in the config file is `[ripgrep]` then
-            // this is what we'll search for. If instead the filename
-            // inside the archive is `[rg]`, then that will be searched
-            // for.
-            Some(section.to_owned())
-        };
+    cf.extraction_targets = build_extraction_targets(section, &tmp)?;
 
     if let Some(value) = tmp.get("version") {
         cf.version = Some(strfmt(value, &tmp)?);
@@ -341,21 +365,11 @@ fn run_section_inner(
         cf.commit = Some(strfmt(value, &tmp)?);
     };
 
-    cf.desired_filename = if let Some(value) = tmp.get("desired_filename") {
-        Some(strfmt(value, &tmp)?)
-    } else {
-        // No explicit "desired_filename" given, so we'll use the
-        // target filename as the desired filename. Note that in the
-        // case where no explicit target filename was given, we defaulted
-        // to the section name. So that will flow on to here too.
-        cf.target_filename_to_extract_from_archive.clone()
-    };
-
     // Publish the two fields needed for the CSV row now that
     // substitutions are done. They remain accurate even on error paths
     // after this point.
     *previous_version = cf.version.clone();
-    *file_name = cf.desired_filename.clone();
+    *file_name = file_name_for_report(&cf.extraction_targets);
 
     let outcome = process(section, &mut cf)?;
 
@@ -386,16 +400,122 @@ fn run_section_inner(
     Ok(outcome)
 }
 
-fn target_file_already_exists(conf: &Config) -> bool {
-    let filename_to_check = if let Some(fname) = conf.desired_filename.as_ref() {
-        fname
-    } else if let Some(fname) = conf.target_filename_to_extract_from_archive.as_ref() {
-        fname
-    } else {
-        panic!("This should be impossible")
-    };
+/// Build the in-memory plan for what to extract from the archive
+/// (or, for non-archive downloads, where to write the single file).
+///
+/// Two INI keys feed in:
+///   * `target_filename_to_extract_from_archive` — singular form, may
+///     be a regex, paired with `desired_filename` for renaming.
+///   * `target_filenames_to_extract_from_archive` — plural form, a
+///     comma-separated list. Each entry is a regex (typically a
+///     literal filename) and the file is extracted under its archive
+///     basename. `desired_filename` does NOT apply here.
+///
+/// The two are mutually exclusive; specifying both, or specifying the
+/// plural form together with `desired_filename`, is a config error.
+/// If neither is given, default to a single target whose pattern and
+/// destination are both the section name.
+fn build_extraction_targets(
+    section: &str,
+    tmp: &HashMap<String, String>,
+) -> Result<Vec<ExtractionTarget>> {
+    let plural_raw = tmp.get("target_filenames_to_extract_from_archive");
+    let singular_raw = tmp.get("target_filename_to_extract_from_archive");
+    let desired_filename_raw = tmp.get("desired_filename");
 
-    Path::new(&filename_to_check).exists()
+    if plural_raw.is_some() && singular_raw.is_some() {
+        return Err(anyhow!(
+            "[{}] target_filename_to_extract_from_archive and \
+             target_filenames_to_extract_from_archive are mutually exclusive",
+            section
+        ));
+    }
+    if plural_raw.is_some() && desired_filename_raw.is_some() {
+        return Err(anyhow!(
+            "[{}] desired_filename does not apply when \
+             target_filenames_to_extract_from_archive is set; extracted \
+             files keep their archive names",
+            section
+        ));
+    }
+
+    if let Some(raw) = plural_raw {
+        // JSON array of strings, e.g. `["rg", "rg.1", "rg.bash"]`.
+        // JSON's quoting/escaping handles items containing spaces or
+        // commas without needing a custom split rule.
+        let names: Vec<String> = serde_json::from_str(raw).map_err(|e| {
+            anyhow!(
+                "[{}] target_filenames_to_extract_from_archive must be a \
+                 JSON array of strings, e.g. [\"rg\", \"rg.1\"]: {}",
+                section,
+                e
+            )
+        })?;
+        if names.is_empty() {
+            return Err(anyhow!(
+                "[{}] target_filenames_to_extract_from_archive must list \
+                 at least one filename",
+                section
+            ));
+        }
+        let mut targets = Vec::with_capacity(names.len());
+        for item in &names {
+            let pattern_str = strfmt(item, tmp)?;
+            let pattern = regex::Regex::new(&format!("^{}$", &pattern_str))?;
+            targets.push(ExtractionTarget {
+                pattern_str,
+                pattern,
+                rename_to: None,
+            });
+        }
+        Ok(targets)
+    } else {
+        let pattern_str = if let Some(value) = singular_raw {
+            strfmt(value, tmp)?
+        } else {
+            section.to_owned()
+        };
+        let rename_to = if let Some(value) = desired_filename_raw {
+            Some(strfmt(value, tmp)?)
+        } else {
+            Some(pattern_str.clone())
+        };
+        let pattern = regex::Regex::new(&format!("^{}$", &pattern_str))?;
+        Ok(vec![ExtractionTarget {
+            pattern_str,
+            pattern,
+            rename_to,
+        }])
+    }
+}
+
+/// Build the `file_name` field for the CSV reporter. Multiple targets
+/// are joined with `;` so the row stays informative even in plural mode.
+fn file_name_for_report(targets: &[ExtractionTarget]) -> Option<String> {
+    if targets.is_empty() {
+        None
+    } else {
+        Some(
+            targets
+                .iter()
+                .map(|t| t.predicted_output_name())
+                .collect::<Vec<_>>()
+                .join(";"),
+        )
+    }
+}
+
+/// True when every target's predicted output already exists on disk —
+/// i.e. there's nothing the up-to-date check needs to refresh. In
+/// plural mode this is conservative: a single missing file forces a
+/// re-download of all of them, which is fine since they all come out
+/// of the same archive.
+fn target_file_already_exists(conf: &Config) -> bool {
+    !conf.extraction_targets.is_empty()
+        && conf
+            .extraction_targets
+            .iter()
+            .all(|t| Path::new(t.predicted_output_name()).exists())
 }
 
 fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
@@ -519,21 +639,27 @@ fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
     let mut buf: Vec<u8> = Vec::new();
     reader.read_to_end(&mut buf)?;
 
-    if ext == ".tar.xz" {
-        tarxzfile::extract_target_from_tarxz(&mut buf, conf);
+    let extracted: Vec<String> = if ext == ".tar.xz" {
+        tarxzfile::extract_target_from_tarxz(&mut buf, conf)
     } else if ext == ".zip" {
-        zipfile::extract_target_from_zipfile(&mut buf, conf)?;
+        zipfile::extract_target_from_zipfile(&mut buf, conf)?
     } else if ext == ".tar.gz" {
-        tarfile::extract_target_from_tarfile(&mut buf, conf);
+        tarfile::extract_target_from_tarfile(&mut buf, conf)
     } else if ext == ".gz" {
-        gzfile::extract_target_from_gzfile(&mut buf, conf);
+        gzfile::extract_target_from_gzfile(section, &buf, conf)?
     } else if vec![".exe", "", ".com", ".appimage", ".AppImage"].contains(&ext) {
-        // Windows executables are not compressed, so we only need to
-        // handle renames, if the option is given.
-        // let fname = conf.desired_filename.clone().unwrap();
-        // let mut od = output_dir.clone();
-        // let outfilename = od.push(std::path::Path::new(&fname));
-        let desired_filename = conf.desired_filename.as_ref().unwrap();
+        // Single-file downloads (Windows executables, AppImages,
+        // bare binaries) aren't archives — there's nothing to match
+        // against. Only the singular form is meaningful here.
+        let target = conf.singular_target().ok_or_else(|| {
+            anyhow!(
+                "[{}] target_filenames_to_extract_from_archive cannot be \
+                 used with non-archive downloads (extension {:?})",
+                section,
+                ext
+            )
+        })?;
+        let desired_filename = target.rename_to.as_ref().unwrap();
         let tmp_filename = format!("{}.tmp", &desired_filename);
 
         let mut output = std::fs::File::create(&tmp_filename)?;
@@ -542,14 +668,16 @@ fn process(section: &str, conf: &mut Config) -> Result<Outcome> {
             section, &download_url, desired_filename
         );
         output.write_all(&buf)?;
-        // Now rename the file to the desired filename
         std::fs::rename(tmp_filename, desired_filename)?;
+        vec![desired_filename.clone()]
+    } else {
+        Vec::new()
     };
 
-    if let Some(filename) = &conf.desired_filename {
-        if ext != ".exe" {
+    if ext != ".exe" {
+        for path in &extracted {
             // TODO: this must be updated to handle output_dir
-            set_executable(filename)?;
+            set_executable(path)?;
         }
     }
 
@@ -806,19 +934,6 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
 /// Returns a slice of the last n characters of a string
 fn slice_from_end(s: &str, n: usize) -> Option<&str> {
     s.char_indices().rev().nth(n).map(|(i, _)| &s[i..])
-}
-
-fn make_re_target_filename(conf: &Config) -> Result<regex::Regex> {
-    let re = regex::Regex::new(
-        format!(
-            "^{}$",
-            conf.target_filename_to_extract_from_archive
-                .as_ref()
-                .unwrap()
-        )
-        .as_str(),
-    )?;
-    Ok(re)
 }
 
 #[cfg(test)]
@@ -1149,18 +1264,14 @@ mod tests {
         target_filename_to_extract_from_archive = rg
         version = 13.0.0
         */
+        // Only the fields actually read by `extract_data_from_json`
+        // need to be set; the rest fall through to `Default` so
+        // future `Config` fields don't break this test.
         let conf = Config {
-            method: "api_json".to_string(),
-            template: "github_api_latest".to_string(),
-            version: Some("13.0.0".to_string()),
-            page_url: "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest".to_string(),
             anchor_tag: "$.assets.*.browser_download_url".to_string(),
             anchor_text: r"ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz".to_string(),
             version_tag: Some("$.tag_name".to_string()),
-            target_filename_to_extract_from_archive: Some("rg".to_string()),
-            desired_filename: None,
-            commit: None,
-            commit_tag: None,
+            ..Default::default()
         };
         let out = extract_data_from_json(payload, &conf)?;
         let expected_hit = Hit {
@@ -1170,5 +1281,316 @@ mod tests {
         };
         assert_eq!(out, Some(expected_hit));
         Ok(())
+    }
+
+    fn ini_map<const N: usize>(pairs: [(&str, &str); N]) -> HashMap<String, String> {
+        pairs
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn singular_target_defaults_to_section_name() {
+        let targets = build_extraction_targets("ripgrep", &ini_map([])).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].pattern_str, "ripgrep");
+        assert_eq!(targets[0].rename_to.as_deref(), Some("ripgrep"));
+    }
+
+    #[test]
+    fn singular_target_respects_desired_filename() {
+        let tmp = ini_map([
+            ("target_filename_to_extract_from_archive", "fcp-1.0-linux"),
+            ("desired_filename", "fcp"),
+        ]);
+        let targets = build_extraction_targets("fcp", &tmp).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].pattern_str, "fcp-1.0-linux");
+        assert_eq!(targets[0].rename_to.as_deref(), Some("fcp"));
+    }
+
+    #[test]
+    fn plural_targets_keep_original_names() {
+        let tmp = ini_map([(
+            "target_filenames_to_extract_from_archive",
+            r#"["rg", "doc/rg.1", "complete/rg.bash"]"#,
+        )]);
+        let targets = build_extraction_targets("ripgrep", &tmp).unwrap();
+        let names: Vec<&str> = targets.iter().map(|t| t.pattern_str.as_str()).collect();
+        assert_eq!(names, vec!["rg", "doc/rg.1", "complete/rg.bash"]);
+        assert!(targets.iter().all(|t| t.rename_to.is_none()));
+    }
+
+    #[test]
+    fn plural_handles_filenames_with_spaces_and_commas() {
+        let tmp = ini_map([(
+            "target_filenames_to_extract_from_archive",
+            r#"["My Tool", "weird,name.txt"]"#,
+        )]);
+        let targets = build_extraction_targets("tool", &tmp).unwrap();
+        let names: Vec<&str> = targets.iter().map(|t| t.pattern_str.as_str()).collect();
+        assert_eq!(names, vec!["My Tool", "weird,name.txt"]);
+    }
+
+    #[test]
+    fn plural_and_singular_are_mutually_exclusive() {
+        let tmp = ini_map([
+            ("target_filename_to_extract_from_archive", "rg"),
+            (
+                "target_filenames_to_extract_from_archive",
+                r#"["rg", "rg.1"]"#,
+            ),
+        ]);
+        assert!(build_extraction_targets("ripgrep", &tmp).is_err());
+    }
+
+    #[test]
+    fn plural_with_desired_filename_errors() {
+        let tmp = ini_map([
+            (
+                "target_filenames_to_extract_from_archive",
+                r#"["rg", "rg.1"]"#,
+            ),
+            ("desired_filename", "ripgrep"),
+        ]);
+        assert!(build_extraction_targets("ripgrep", &tmp).is_err());
+    }
+
+    #[test]
+    fn empty_plural_list_errors() {
+        let tmp = ini_map([("target_filenames_to_extract_from_archive", "[]")]);
+        assert!(build_extraction_targets("ripgrep", &tmp).is_err());
+    }
+
+    #[test]
+    fn malformed_plural_list_errors() {
+        let tmp = ini_map([("target_filenames_to_extract_from_archive", "rg, rg.1")]);
+        let err = build_extraction_targets("ripgrep", &tmp).unwrap_err();
+        assert!(
+            format!("{}", err).contains("JSON array"),
+            "expected JSON-array hint in error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn singular_target_has_singular_target_helper() {
+        let mut conf = Config::new();
+        conf.extraction_targets = build_extraction_targets("rg", &ini_map([])).unwrap();
+        assert!(conf.singular_target().is_some());
+    }
+
+    #[test]
+    fn plural_targets_has_no_singular_target_helper() {
+        let tmp = ini_map([(
+            "target_filenames_to_extract_from_archive",
+            r#"["rg", "rg.1"]"#,
+        )]);
+        let mut conf = Config::new();
+        conf.extraction_targets = build_extraction_targets("ripgrep", &tmp).unwrap();
+        assert!(conf.singular_target().is_none());
+    }
+
+    #[test]
+    fn report_field_joins_predicted_names_with_semicolons() {
+        let tmp = ini_map([(
+            "target_filenames_to_extract_from_archive",
+            r#"["rg", "doc/rg.1"]"#,
+        )]);
+        let targets = build_extraction_targets("ripgrep", &tmp).unwrap();
+        assert_eq!(
+            file_name_for_report(&targets).as_deref(),
+            Some("rg;doc/rg.1")
+        );
+    }
+
+    // -------- archive-layer integration tests --------
+    //
+    // The extractors write to the current working directory via
+    // `tar::Entry::unpack` and `std::fs::File::create`. Tests below
+    // run inside a fresh tempdir, serialized by a process-wide mutex
+    // so cargo's parallel test runner can't race on `set_current_dir`.
+
+    use std::sync::Mutex;
+
+    /// RAII: locks the global CWD mutex, cd's into a fresh tempdir,
+    /// and restores the previous CWD when dropped. Recovers from
+    /// poisoned mutexes (a panic in another test) so a single failing
+    /// test doesn't cascade.
+    struct CwdGuard {
+        prev: std::path::PathBuf,
+        _temp: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CwdGuard {
+        fn new() -> Self {
+            static LOCK: Mutex<()> = Mutex::new(());
+            let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let temp = tempfile::tempdir().unwrap();
+            let prev = std::env::current_dir().unwrap();
+            std::env::set_current_dir(temp.path()).unwrap();
+            CwdGuard {
+                prev,
+                _temp: temp,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
+
+    fn build_test_tar(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_path(name).unwrap();
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, *data).unwrap();
+        }
+        builder.into_inner().unwrap()
+    }
+
+    fn build_test_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zw = zip::ZipWriter::new(buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, data) in entries {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(data).unwrap();
+        }
+        zw.finish().unwrap().into_inner()
+    }
+
+    fn make_conf_from_ini(section: &str, pairs: &[(&str, &str)]) -> Config {
+        let tmp: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let mut conf = Config::new();
+        conf.extraction_targets = build_extraction_targets(section, &tmp).unwrap();
+        conf
+    }
+
+    #[test]
+    fn extract_targets_from_tar_pulls_each_listed_file_under_original_basename() {
+        let _cwd = CwdGuard::new();
+
+        let tar_bytes = build_test_tar(&[
+            ("rg", b"binary"),
+            ("doc/rg.1", b"manpage"),
+            ("complete/rg.bash", b"completion"),
+            ("README.md", b"unwanted"),
+        ]);
+
+        let conf = make_conf_from_ini(
+            "ripgrep",
+            &[(
+                "target_filenames_to_extract_from_archive",
+                r#"["rg", "rg.1", "rg.bash"]"#,
+            )],
+        );
+
+        let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+
+        let written_set: std::collections::HashSet<String> = written.into_iter().collect();
+        assert_eq!(written_set.len(), 3);
+        assert!(written_set.contains("rg"));
+        assert!(written_set.contains("rg.1"));
+        assert!(written_set.contains("rg.bash"));
+
+        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
+        assert_eq!(std::fs::read("rg.1").unwrap(), b"manpage");
+        assert_eq!(std::fs::read("rg.bash").unwrap(), b"completion");
+        assert!(!std::path::Path::new("README.md").exists());
+    }
+
+    #[test]
+    fn extract_targets_from_tar_renames_in_singular_mode() {
+        let _cwd = CwdGuard::new();
+
+        let tar_bytes = build_test_tar(&[("fcp-1.0-x86_64-unknown-linux-gnu", b"binary")]);
+
+        let conf = make_conf_from_ini(
+            "fcp",
+            &[
+                (
+                    "target_filename_to_extract_from_archive",
+                    "fcp-1.0-x86_64-unknown-linux-gnu",
+                ),
+                ("desired_filename", "fcp"),
+            ],
+        );
+
+        let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+
+        assert_eq!(written, vec!["fcp".to_string()]);
+        assert_eq!(std::fs::read("fcp").unwrap(), b"binary");
+        assert!(!std::path::Path::new("fcp-1.0-x86_64-unknown-linux-gnu").exists());
+    }
+
+    #[test]
+    fn extract_targets_from_tar_warns_but_succeeds_when_a_target_is_missing() {
+        let _cwd = CwdGuard::new();
+
+        let tar_bytes = build_test_tar(&[("rg", b"binary")]);
+        let conf = make_conf_from_ini(
+            "ripgrep",
+            &[(
+                "target_filenames_to_extract_from_archive",
+                r#"["rg", "missing-from-archive"]"#,
+            )],
+        );
+
+        let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+        let written = crate::archive::extract_targets_from_tar(&mut archive, &conf);
+
+        // Only the matching target produces output; the missing one
+        // is logged but doesn't fail the run.
+        assert_eq!(written, vec!["rg".to_string()]);
+        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
+    }
+
+    #[test]
+    fn extract_target_from_zipfile_pulls_each_listed_file() {
+        let _cwd = CwdGuard::new();
+
+        let mut zip_bytes = build_test_zip(&[
+            ("rg", b"binary"),
+            ("doc/rg.1", b"manpage"),
+            ("complete/rg.bash", b"completion"),
+            ("README.md", b"unwanted"),
+        ]);
+
+        let conf = make_conf_from_ini(
+            "ripgrep",
+            &[(
+                "target_filenames_to_extract_from_archive",
+                r#"["rg", "rg.1", "rg.bash"]"#,
+            )],
+        );
+
+        let written = crate::zipfile::extract_target_from_zipfile(&mut zip_bytes, &conf).unwrap();
+
+        let written_set: std::collections::HashSet<String> = written.into_iter().collect();
+        assert_eq!(written_set.len(), 3);
+        assert!(written_set.contains("rg"));
+        assert!(written_set.contains("rg.1"));
+        assert!(written_set.contains("rg.bash"));
+
+        assert_eq!(std::fs::read("rg").unwrap(), b"binary");
+        assert_eq!(std::fs::read("rg.1").unwrap(), b"manpage");
+        assert_eq!(std::fs::read("rg.bash").unwrap(), b"completion");
+        assert!(!std::path::Path::new("README.md").exists());
     }
 }

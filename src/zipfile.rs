@@ -1,54 +1,57 @@
+use crate::archive::{
+    all_fulfilled, first_unfulfilled_match, init_target_states, warn_unfulfilled,
+};
 use crate::Config;
-use log::{debug, warn};
+use log::debug;
 use std::io::{Read, Write};
 use std::path::Path;
 
-pub fn extract_target_from_zipfile(compressed: &mut [u8], conf: &Config) -> anyhow::Result<()> {
+/// Walk the zip once, fulfilling each `ExtractionTarget` in `conf` on
+/// the first archive entry whose basename matches that target's
+/// pattern. Returns the on-disk paths actually written. Targets that
+/// never match are warned about but do not error — keeps a typo'd
+/// plural entry from killing the run.
+pub fn extract_target_from_zipfile(
+    compressed: &mut [u8],
+    conf: &Config,
+) -> anyhow::Result<Vec<String>> {
     let mut cbuf = std::io::Cursor::new(compressed);
     let mut archive = zip::ZipArchive::new(&mut cbuf)?;
 
-    let target_filename = conf.desired_filename.as_ref().expect(
-        "To extract from an archive, a target filename must be supplied using the \
-        parameter \"target_filename_to_extract_from_archive\" in the config file.",
-    );
+    let mut state = init_target_states(conf);
+    let mut written: Vec<String> = Vec::new();
 
-    let re_pat = crate::make_re_target_filename(conf)
-        .expect("Failed to construct a regex for the target filename");
-
-    for fname in archive
-        .file_names()
-        // What's dumb is that the borrow below `by_name` is a mutable
-        // borrow, which means that an immutable borrow for
-        // `archive.file_names` won't be allowed. To work around this,
-        // for now just collect all the filenames into a long list.
-        // Since we're looking for a specific name, it would be more
-        // efficient to first find the name, leave the loop, and in the
-        // next section do the extraction.
-        .map(String::from)
-        .collect::<Vec<String>>()
-    {
-        let mut file = archive.by_name(&fname)?;
-        let path = Path::new(&fname);
-        debug!(
-            "zip, got filename: {}",
-            &path.file_name().unwrap().to_str().unwrap()
-        );
-        if let Some(p) = &path.file_name() {
-            if re_pat.is_match(p.to_str().unwrap()) {
-                debug!("zip, Got a match: {}", &fname);
-                let mut rawfile = std::fs::File::create(&target_filename)?;
-                let mut buf = Vec::new();
-                file.read_to_end(&mut buf)?;
-                rawfile.write_all(&buf)?;
-                return Ok(());
-            }
+    // Collect filenames first to side-step the borrow conflict between
+    // `archive.file_names()` (immutable) and `archive.by_name()` (mutable).
+    let names: Vec<String> = archive.file_names().map(String::from).collect();
+    for fname in names {
+        if all_fulfilled(&state) {
+            break;
         }
+        let path = Path::new(&fname);
+        let Some(basename) = path.file_name().and_then(|p| p.to_str()) else {
+            continue;
+        };
+        debug!("zip, got filename: {}", basename);
+
+        let Some(slot) = first_unfulfilled_match(&mut state, basename) else {
+            continue;
+        };
+        let out_name = slot
+            .target
+            .rename_to
+            .as_deref()
+            .unwrap_or(basename)
+            .to_string();
+        debug!("zip, Got a match: {} -> {}", &fname, &out_name);
+        let mut entry = archive.by_name(&fname)?;
+        let mut payload = Vec::new();
+        entry.read_to_end(&mut payload)?;
+        std::fs::File::create(&out_name)?.write_all(&payload)?;
+        slot.fulfilled = true;
+        written.push(out_name);
     }
 
-    warn!(
-        "Failed to find file inside archive: \"{}\"",
-        &target_filename
-    );
-
-    Ok(())
+    warn_unfulfilled(&state);
+    Ok(written)
 }

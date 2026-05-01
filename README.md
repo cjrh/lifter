@@ -265,6 +265,39 @@ prefer that it be called `fcp` after extraction. To force this,
 set the `desired_filename` field. The extracted executable will
 be renamed to this after extraction.
 
+### Extracting multiple files from one archive
+
+Some releases ship more than one useful file in the same archive
+(e.g. a binary plus a man page or a shell-completion script). The
+`target_filenames_to_extract_from_archive` field (note the plural
+`s`) takes a JSON array of filenames to pull out of the archive.
+Each entry is matched against the basename of the archive entries
+and the matched files are written under their original names:
+
+```ini
+[ripgrep]
+template = github_api_latest
+project = BurntSushi/ripgrep
+anchor_text = ripgrep-(\d+\.\d+\.\d+)-x86_64-unknown-linux-musl.tar.gz
+target_filenames_to_extract_from_archive = ["rg", "rg.1", "rg.bash"]
+version = 13.0.0
+```
+
+This is mutually exclusive with the singular
+`target_filename_to_extract_from_archive`, and `desired_filename` does
+**not** apply to the plural form — the extracted files keep their
+archive basenames.
+
+Each entry is technically a regex, but the simple case of literal
+filenames is what you almost always want. JSON quoting handles
+filenames that contain spaces, commas, or other punctuation without
+any special escaping rules of our own.
+
+The plural form only makes sense for true archive formats (`.zip`,
+`.tar.gz`, `.tar.xz`). It is rejected for single-file downloads
+(`.gz`, `.exe`, `.com`, `.AppImage`, bare binaries) since those have
+no internal filenames to match against.
+
 ## Templates
 
 The description given in the *Details* section above is accurate but
