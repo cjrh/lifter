@@ -20,7 +20,7 @@ tag-name = "{{version}}"
 publish = false
 
 [dependencies]
-scraper = "0.26.0"
+scraper = "0.27.0"
 regex = "1.6.0"
 structopt = { version = "0.3.26", features = ["paw"] }
 paw = "1.0.0"
