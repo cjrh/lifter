@@ -5,6 +5,7 @@ use lifter::RunContext;
 use log::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 const LONG_ABOUT: &str = "\
 Download single-file binaries from GitHub Releases (and other sites) listed in
@@ -64,9 +65,11 @@ struct Args {
     /// that the lifter binary is in.
     #[structopt(parse(from_os_str), short = "w", long = "working-dir")]
     working_dir: Option<std::path::PathBuf>,
-    /// The config file to use for the download definitions
-    #[structopt(short = "c", long = "config-file", default_value = "lifter.config")]
-    configfile: String,
+    /// Config file with the download definitions. When omitted, lifter
+    /// looks for lifter.config (then lifter.ini) in the current
+    /// directory and then alongside the lifter executable.
+    #[structopt(short = "c", long = "config-file")]
+    configfile: Option<String>,
     /// Only run these names. Comma separated.
     #[structopt(short = "f", long = "filter")]
     filter: Option<String>,
@@ -111,6 +114,48 @@ struct AddGithubArgs {
     /// Print the generated entry without modifying the config
     #[structopt(long = "dry-run")]
     dry_run: bool,
+}
+
+/// Find the configuration file lifter reads from and writes to.
+///
+/// When `requested` is `Some`, it is an explicit `--config-file` value
+/// and is honoured verbatim (resolved against the current directory like
+/// any other relative path). When it is `None`, lifter searches so it
+/// can be run from any directory: the current directory first, then the
+/// directory containing the lifter executable, trying `lifter.config`
+/// and then the legacy `lifter.ini` in each. The executable's directory
+/// is the important case — it is where a typical install keeps the
+/// config alongside the binaries it manages, so `lifter` and
+/// `lifter add` update that one config no matter where they are invoked
+/// from. The returned path is always absolute.
+///
+/// If no config exists yet, the path in the executable's directory is
+/// returned so `add` creates it where future runs will look.
+fn resolve_config_path(requested: Option<&str>) -> Result<PathBuf> {
+    let cwd = std::env::current_dir()?;
+    if let Some(path) = requested {
+        let p = PathBuf::from(path);
+        return Ok(if p.is_absolute() { p } else { cwd.join(p) });
+    }
+
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+
+    const NAMES: [&str; 2] = ["lifter.config", "lifter.ini"];
+    for dir in [Some(cwd.clone()), exe_dir.clone()].iter().flatten() {
+        for name in NAMES {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    // No config exists yet: create it next to the executable so future
+    // runs (from any directory) find it, falling back to the current
+    // directory only when the executable's location is unknown.
+    Ok(exe_dir.unwrap_or(cwd).join("lifter.config"))
 }
 
 fn run_command(command: Command, config_path: &std::path::Path) -> Result<()> {
@@ -167,23 +212,29 @@ fn main(args: Args) -> Result<()> {
         .init()
         .unwrap();
 
-    let current_dir = std::env::current_dir()?;
-    let working_dir = args.working_dir.unwrap_or(current_dir);
-    // Keep the CWD aligned with `working_dir` so the INI file lookup
-    // below (which is a relative path by default) finds the config in
-    // the expected place. The downloads themselves no longer rely on
-    // CWD — they're written to `working_dir` explicitly via
-    // `run_section`.
+    // Resolve the config first (relative to the real CWD), then derive
+    // the working directory from it so downloads land next to the
+    // config. This is what lets `lifter` (and `lifter add`) be invoked
+    // from any directory yet still update the one config that lives
+    // alongside the managed binaries.
+    let config_path = resolve_config_path(args.configfile.as_deref())?;
+    let working_dir = args.working_dir.unwrap_or_else(|| {
+        config_path
+            .parent()
+            .map(Path::to_path_buf)
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
+    // The downloads no longer rely on CWD — they're written to
+    // `working_dir` explicitly via `run_section`, and the config path is
+    // already absolute — but keep the CWD aligned with `working_dir` for
+    // any incidental relative-path behaviour.
     std::env::set_current_dir(&working_dir)?;
 
-    let p = std::path::PathBuf::from(args.configfile);
-    let filename = match p.exists() {
-        true => p.to_string_lossy().to_string(),
-        false => "lifter.ini".to_string(),
-    };
+    let filename = config_path.to_string_lossy().to_string();
 
     if let Some(command) = args.command {
-        return run_command(command, &std::path::PathBuf::from(&filename));
+        return run_command(command, &config_path);
     }
 
     let conf = tini::Ini::from_file(&filename)?;
