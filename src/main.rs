@@ -1,5 +1,6 @@
 use anyhow::Result;
 use itertools::Itertools;
+use lifter::add::AddGithubOptions;
 use lifter::RunContext;
 use log::*;
 use rayon::prelude::*;
@@ -35,6 +36,9 @@ EXAMPLES:
     # Run 8 downloads in parallel, restricted to a couple of sections.
     lifter -vv -x 8 -f ripgrep,fzf
 
+    # Append a GitHub Releases definition to the active config.
+    lifter add github BurntSushi/ripgrep --extract rg
+
     # A GitHub token raises the API rate limit, and is effectively required
     # for configs with many github_api_latest entries.
     GITHUB_TOKEN=ghp_xxxxxxxxxxxx lifter -vv
@@ -69,6 +73,81 @@ struct Args {
     /// Number of parallel download workers
     #[structopt(short = "x", long = "threads", default_value = "1")]
     threads: usize,
+    #[structopt(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(structopt::StructOpt)]
+enum Command {
+    /// Add a new download definition to the active config
+    Add(AddArgs),
+}
+
+#[derive(structopt::StructOpt)]
+struct AddArgs {
+    #[structopt(subcommand)]
+    command: AddCommand,
+}
+
+#[derive(structopt::StructOpt)]
+enum AddCommand {
+    /// Add a GitHub Releases definition using the latest release metadata
+    Github(AddGithubArgs),
+}
+
+#[derive(structopt::StructOpt)]
+struct AddGithubArgs {
+    /// GitHub repository in OWNER/REPO form
+    repo: String,
+    /// Config section name. Defaults to the repository name.
+    #[structopt(long = "name")]
+    section_name: Option<String>,
+    /// Substring used to choose a release asset when inference is ambiguous
+    #[structopt(long = "asset")]
+    asset_filter: Option<String>,
+    /// Archive member to extract, e.g. --extract rg
+    #[structopt(long = "extract")]
+    extract: Option<String>,
+    /// Print the generated entry without modifying the config
+    #[structopt(long = "dry-run")]
+    dry_run: bool,
+}
+
+fn run_command(command: Command, config_path: &std::path::Path) -> Result<()> {
+    match command {
+        Command::Add(add_args) => match add_args.command {
+            AddCommand::Github(github_args) => {
+                let added = lifter::add::add_github_definition(
+                    config_path,
+                    &AddGithubOptions {
+                        repo: github_args.repo,
+                        section_name: github_args.section_name,
+                        asset_filter: github_args.asset_filter,
+                        extract: github_args.extract,
+                        dry_run: github_args.dry_run,
+                    },
+                )?;
+                if added.wrote_file {
+                    eprintln!(
+                        "Added [{}] to {} using asset {}",
+                        added.section_name,
+                        added.config_path.display(),
+                        added.asset_name
+                    );
+                    if added.wrote_template {
+                        eprintln!("Also added missing [template:github_api_latest] template");
+                    }
+                } else {
+                    eprintln!(
+                        "Dry run: generated [{}] from asset {}",
+                        added.section_name, added.asset_name
+                    );
+                }
+                print!("{}", added.entry);
+            }
+        },
+    }
+    Ok(())
 }
 
 #[paw::main]
@@ -102,6 +181,11 @@ fn main(args: Args) -> Result<()> {
         true => p.to_string_lossy().to_string(),
         false => "lifter.ini".to_string(),
     };
+
+    if let Some(command) = args.command {
+        return run_command(command, &std::path::PathBuf::from(&filename));
+    }
+
     let conf = tini::Ini::from_file(&filename)?;
     let sections_raw = conf.iter().collect_vec();
     let filters = args.filter.or_else(|| Some("".to_string())).unwrap();

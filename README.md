@@ -142,6 +142,19 @@ There is a sample configuration file, `lifter.config` that lets you specify whic
 applications you want, and from where. *lifter* will keep track of the most recent
 version, so it is cheap to rerun if nothing's changed.
 
+You can append a simple GitHub Releases definition to the active config with the
+`add github` subcommand:
+
+```bash
+$ lifter add github starship/starship
+$ lifter add github BurntSushi/ripgrep --extract rg
+```
+
+The command uses GitHub's release API directly, records the latest release tag as
+`version`, and tries to choose the asset for the current platform. If several
+assets look plausible, pass `--asset <substring>` to disambiguate. Use
+`--dry-run` to print the generated config entry without writing it.
+
 This repo contains an example `lifter.config` file that you can use as a
 starting point. It already contains sections for many popular golang and
 rustlang single-file-executable programs, like

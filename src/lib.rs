@@ -12,6 +12,7 @@ use scraper::{Html, Selector};
 use strfmt::strfmt;
 use url::Url;
 
+pub mod add;
 mod archive;
 mod btlog;
 mod gzfile;
