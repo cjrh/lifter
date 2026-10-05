@@ -374,15 +374,17 @@ fn simple_semver(tag_name: &str) -> Option<&str> {
 }
 
 fn escape_regex_literal(value: &str) -> String {
-    value
-        .chars()
-        .flat_map(|ch| match ch {
-            '.' | '+' | '*' | '?' | '^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' => {
-                vec!['\\', ch]
-            }
-            _ => vec![ch],
-        })
-        .collect()
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(
+            ch,
+            '.' | '+' | '*' | '?' | '^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 fn render_definition(
@@ -504,6 +506,52 @@ mod tests {
             .to_string();
 
         assert!(err.contains("matched multiple assets"));
+    }
+
+    #[test]
+    fn regex_literal_escaping_preserves_output() {
+        let cases = [
+            ("", ""),
+            ("tool-linux-amd64", "tool-linux-amd64"),
+            (r".+*?^$()[]{}|\", r"\.\+\*\?\^\$\(\)\[\]\{\}\|\\"),
+            ("工具-édition🦀.zip", "工具-édition🦀\\.zip"),
+            ("#&-~ \t\r\n", "#&-~ \t\r\n"),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(escape_regex_literal(input), expected);
+        }
+    }
+
+    #[test]
+    fn escaped_asset_name_matches_only_the_literal_name() -> Result<()> {
+        let asset = r"工具+[édition]-(x86_64)\build.tar.gz";
+        let pattern = anchor_text_for_asset(asset, "latest");
+        let regex = regex::Regex::new(&format!("^(?:{pattern})$"))?;
+
+        assert!(regex.is_match(asset));
+        assert!(!regex.is_match(r"工具+[édition]-(x86_64)\buildXtarXgz"));
+        assert!(!regex.is_match(r"工具+[édition]-(x86_64)\build.tar.gz.sig"));
+        Ok(())
+    }
+
+    #[test]
+    fn versioned_asset_name_keeps_literal_prefix_and_suffix() -> Result<()> {
+        let asset = "工具+[édition]-v1.2.3-(x86_64).tar.gz";
+        let pattern = anchor_text_for_asset(asset, "v1.2.3");
+        assert_eq!(
+            pattern,
+            r"工具\+\[édition\]-v?(\d+\.\d+\.\d+)-\(x86_64\)\.tar\.gz"
+        );
+        let regex = regex::Regex::new(&format!("^(?:{pattern})$"))?;
+
+        assert!(regex.is_match(asset));
+        let captures = regex
+            .captures("工具+[édition]-v2.3.4-(x86_64).tar.gz")
+            .unwrap();
+        assert_eq!(&captures[1], "2.3.4");
+        assert!(!regex.is_match("工具+[édition]-v2.3.4-(x86_64)XtarXgz"));
+        Ok(())
     }
 
     #[test]
