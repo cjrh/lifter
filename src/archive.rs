@@ -86,25 +86,26 @@ pub(crate) fn extract_targets_from_tar<R: std::io::Read>(
                 continue;
             }
         };
-        let path_owned = match file.header().path() {
-            Ok(p) => p.into_owned(),
+        // Resolve GNU/PAX paths and borrow the basename instead of copying it.
+        let path = match file.path() {
+            Ok(p) => p,
             Err(e) => {
                 debug!("Skipping tar entry with bad path: {}", e);
                 continue;
             }
         };
-        let basename = match path_owned.file_name().and_then(|p| p.to_str()) {
-            Some(b) => b.to_string(),
+        let basename = match path.file_name().and_then(|p| p.to_str()) {
+            Some(b) => b,
             None => continue,
         };
-        debug!("tar, got filename: {}", &basename);
+        debug!("tar, got filename: {}", basename);
 
-        let Some(slot) = first_unfulfilled_match(&mut state, &basename) else {
+        let Some(slot) = first_unfulfilled_match(&mut state, basename) else {
             continue;
         };
-        let out_name = slot.target.rename_to.as_deref().unwrap_or(&basename);
+        let out_name = slot.target.rename_to.as_deref().unwrap_or(basename);
         let out_path = output_dir.join(out_name);
-        debug!("tar, Got a match: {} -> {}", &basename, out_path.display());
+        debug!("tar, Got a match: {} -> {}", basename, out_path.display());
         if let Err(e) = file.unpack(&out_path) {
             warn!("Failed to unpack {}: {}", out_path.display(), e);
             continue;
@@ -115,4 +116,69 @@ pub(crate) fn extract_targets_from_tar<R: std::io::Read>(
 
     warn_unfulfilled(&state);
     written
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_targets_from_tar;
+    use crate::testutil::make_conf_from_ini;
+    use std::io::Cursor;
+
+    #[test]
+    fn extracts_gnu_long_path_and_renames_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = format!("{}tool", "nested/".repeat(20));
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(6);
+        header.set_mode(0o644);
+        builder
+            .append_data(&mut header, &path, &b"binary"[..])
+            .unwrap();
+        let tar_bytes = builder.into_inner().unwrap();
+        let conf = make_conf_from_ini(
+            "tool",
+            &[
+                ("target_filename_to_extract_from_archive", "tool"),
+                ("desired_filename", "renamed-tool"),
+            ],
+        );
+
+        let mut archive = tar::Archive::new(Cursor::new(tar_bytes));
+        let written = extract_targets_from_tar(&mut archive, &conf, dir.path());
+
+        assert_eq!(written, vec![dir.path().join("renamed-tool")]);
+        assert_eq!(std::fs::read(&written[0]).unwrap(), b"binary");
+        assert!(!dir.path().join("tool").exists());
+    }
+
+    #[test]
+    fn matches_pax_path_instead_of_raw_header_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut builder = tar::Builder::new(Vec::new());
+        builder
+            .append_pax_extensions([("path", &b"nested/resolved-tool"[..])])
+            .unwrap();
+        let mut header = tar::Header::new_ustar();
+        header.set_size(6);
+        header.set_mode(0o644);
+        builder
+            .append_data(&mut header, "header-tool", &b"binary"[..])
+            .unwrap();
+        let tar_bytes = builder.into_inner().unwrap();
+        let conf = make_conf_from_ini(
+            "tool",
+            &[(
+                "target_filenames_to_extract_from_archive",
+                r#"["resolved-tool", "header-tool"]"#,
+            )],
+        );
+
+        let mut archive = tar::Archive::new(Cursor::new(tar_bytes));
+        let written = extract_targets_from_tar(&mut archive, &conf, dir.path());
+
+        assert_eq!(written, vec![dir.path().join("resolved-tool")]);
+        assert_eq!(std::fs::read(&written[0]).unwrap(), b"binary");
+        assert!(!dir.path().join("header-tool").exists());
+    }
 }
