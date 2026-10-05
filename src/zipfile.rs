@@ -22,14 +22,16 @@ pub fn extract_target_from_zipfile(
     let mut state = init_target_states(conf);
     let mut written: Vec<PathBuf> = Vec::new();
 
-    // Collect filenames first to side-step the borrow conflict between
-    // `archive.file_names()` (immutable) and `archive.by_name()` (mutable).
-    let names: Vec<String> = archive.file_names().map(String::from).collect();
-    for fname in names {
+    // Borrow names from the central directory without copying the full list.
+    // Open only matching entries, so unreadable unrelated entries are skipped.
+    for index in 0..archive.len() {
         if all_fulfilled(&state) {
             break;
         }
-        let entry_path = Path::new(&fname);
+        let Some(fname) = archive.name_for_index(index) else {
+            continue;
+        };
+        let entry_path = Path::new(fname);
         let Some(basename) = entry_path.file_name().and_then(|p| p.to_str()) else {
             continue;
         };
@@ -40,8 +42,8 @@ pub fn extract_target_from_zipfile(
         };
         let out_name = slot.target.rename_to.as_deref().unwrap_or(basename);
         let out_path = output_dir.join(out_name);
-        debug!("zip, Got a match: {} -> {}", &fname, out_path.display());
-        let mut entry = archive.by_name(&fname)?;
+        debug!("zip, Got a match: {} -> {}", fname, out_path.display());
+        let mut entry = archive.by_index(index)?;
         let mut payload = Vec::new();
         entry.read_to_end(&mut payload)?;
         std::fs::File::create(&out_path)?.write_all(&payload)?;
@@ -51,4 +53,73 @@ pub fn extract_target_from_zipfile(
 
     warn_unfulfilled(&state);
     Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_target_from_zipfile;
+    use crate::testutil::{build_test_zip, make_conf_from_ini};
+
+    #[test]
+    fn extracts_first_matching_entry_and_renames_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut zip_bytes = build_test_zip(&[
+            ("first/tool", b"first binary"),
+            ("second/tool", b"second binary"),
+        ]);
+        let conf = make_conf_from_ini(
+            "tool",
+            &[
+                ("target_filename_to_extract_from_archive", "tool"),
+                ("desired_filename", "renamed-tool"),
+            ],
+        );
+
+        let written = extract_target_from_zipfile(&mut zip_bytes, &conf, dir.path()).unwrap();
+
+        assert_eq!(written, vec![dir.path().join("renamed-tool")]);
+        assert_eq!(
+            std::fs::read(dir.path().join("renamed-tool")).unwrap(),
+            b"first binary"
+        );
+        assert!(!dir.path().join("tool").exists());
+    }
+
+    #[test]
+    fn skips_unmatched_entry_with_invalid_local_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut zip_bytes = build_test_zip(&[("README.md", b"unwanted"), ("tool", b"binary")]);
+        // Keep the central directory intact, but make opening README.md fail.
+        assert_eq!(&zip_bytes[..4], b"PK\x03\x04");
+        zip_bytes[..4].copy_from_slice(b"BAD!");
+        let conf = make_conf_from_ini(
+            "tool",
+            &[("target_filenames_to_extract_from_archive", r#"["tool"]"#)],
+        );
+
+        let written = extract_target_from_zipfile(&mut zip_bytes, &conf, dir.path()).unwrap();
+
+        assert_eq!(written, vec![dir.path().join("tool")]);
+        assert_eq!(std::fs::read(dir.path().join("tool")).unwrap(), b"binary");
+        assert!(!dir.path().join("README.md").exists());
+    }
+
+    #[test]
+    fn returns_written_files_when_a_target_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut zip_bytes = build_test_zip(&[("tool", b"binary")]);
+        let conf = make_conf_from_ini(
+            "tool",
+            &[(
+                "target_filenames_to_extract_from_archive",
+                r#"["tool", "missing"]"#,
+            )],
+        );
+
+        let written = extract_target_from_zipfile(&mut zip_bytes, &conf, dir.path()).unwrap();
+
+        assert_eq!(written, vec![dir.path().join("tool")]);
+        assert_eq!(std::fs::read(dir.path().join("tool")).unwrap(), b"binary");
+        assert!(!dir.path().join("missing").exists());
+    }
 }
