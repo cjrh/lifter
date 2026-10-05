@@ -9,7 +9,7 @@
 //! walker that the two tar variants both use.
 //!
 //! The zip case lives in `zipfile.rs` because `ZipArchive` requires
-//! random access (`by_name`) rather than the streaming iteration the
+//! random access (`by_index`) rather than the streaming iteration the
 //! tar reader provides.
 
 use crate::{Config, ExtractionTarget};
