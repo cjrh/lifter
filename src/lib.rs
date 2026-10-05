@@ -817,20 +817,16 @@ fn extract_data_from_json<T: AsRef<str>>(payload: T, conf: &Config) -> Result<Op
         None
     };
 
-    let urls: Vec<String> = data
-        .query(&conf.anchor_tag)?
-        .into_iter()
-        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-        .collect();
-
+    let urls = data.query(&conf.anchor_tag)?;
     let re_pat = regex::Regex::new(&conf.anchor_text)?;
 
-    for u in urls {
-        if re_pat.is_match(&u) {
+    // Borrow candidate URLs; only the selected URL needs an owned copy.
+    for u in urls.into_iter().filter_map(Value::as_str) {
+        if re_pat.is_match(u) {
             return Ok(Some(Hit {
                 version: version_str,
                 commit: commit_str,
-                download_url: u,
+                download_url: u.to_string(),
             }));
         }
     }
@@ -1308,6 +1304,108 @@ mod tests {
         };
         assert_eq!(out, Some(expected_hit));
         Ok(())
+    }
+
+    fn json_download_conf() -> Config {
+        Config {
+            anchor_tag: "$.assets.*.browser_download_url".to_string(),
+            anchor_text: r"tool-linux\.tar\.gz".to_string(),
+            version_tag: Some("$.tag_name".to_string()),
+            commit_tag: Some("$.target_commitish".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn json_download_uses_first_matching_string() -> Result<()> {
+        let payload = serde_json::json!({
+            "tag_name": "v1.2.3",
+            "target_commitish": "abc123",
+            "assets": [
+                {"browser_download_url": "https://example.com/tool-windows.zip"},
+                {"browser_download_url": null},
+                {"browser_download_url": 42},
+                {"browser_download_url": true},
+                {"browser_download_url": []},
+                {"browser_download_url": {}},
+                {"browser_download_url": "https://example.com/first/tool-linux.tar.gz"},
+                {"browser_download_url": "https://example.com/second/tool-linux.tar.gz"}
+            ]
+        });
+
+        let hit = extract_data_from_json(payload.to_string(), &json_download_conf())?;
+
+        assert_eq!(
+            hit,
+            Some(Hit {
+                version: "v1.2.3".to_string(),
+                commit: Some("abc123".to_string()),
+                download_url: "https://example.com/first/tool-linux.tar.gz".to_string(),
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn json_download_returns_none_without_a_matching_string() -> Result<()> {
+        for payload in [
+            r#"{"assets": []}"#,
+            r#"{"assets": [{"browser_download_url": null}]}"#,
+            r#"{"assets": [{"browser_download_url": "https://example.com/tool-windows.zip"}]}"#,
+        ] {
+            assert_eq!(
+                extract_data_from_json(payload, &json_download_conf())?,
+                None
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn json_download_defaults_missing_or_non_string_metadata() -> Result<()> {
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({"tag_name": 42, "target_commitish": false}),
+        ] {
+            let mut payload = payload;
+            payload["assets"] = serde_json::json!([
+                {"browser_download_url": "https://example.com/tool-linux.tar.gz"}
+            ]);
+
+            let hit = extract_data_from_json(payload.to_string(), &json_download_conf())?;
+
+            assert_eq!(
+                hit,
+                Some(Hit {
+                    version: String::new(),
+                    commit: None,
+                    download_url: "https://example.com/tool-linux.tar.gz".to_string(),
+                })
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn json_download_rejects_invalid_regex_even_without_candidates() {
+        let conf = Config {
+            anchor_text: "[".to_string(),
+            ..json_download_conf()
+        };
+
+        let error = extract_data_from_json(r#"{"assets": []}"#, &conf).unwrap_err();
+
+        assert!(error.downcast_ref::<regex::Error>().is_some());
+    }
+
+    #[test]
+    fn json_download_propagates_json_and_query_errors() {
+        assert!(extract_data_from_json("{", &json_download_conf()).is_err());
+        let conf = Config {
+            anchor_tag: "$[".to_string(),
+            ..json_download_conf()
+        };
+        assert!(extract_data_from_json(r#"{"assets": []}"#, &conf).is_err());
     }
 
     fn ini_map<const N: usize>(pairs: [(&str, &str); N]) -> HashMap<String, String> {
