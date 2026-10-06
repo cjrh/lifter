@@ -170,14 +170,10 @@ fn section_name_for_repo(repo: &str, override_name: Option<&str>) -> String {
 }
 
 fn select_asset(assets: &[String], asset_filter: Option<&str>) -> Result<String> {
-    let candidates = assets
-        .iter()
-        .filter(|asset| !is_auxiliary_asset(asset))
-        .collect::<Vec<_>>();
+    let candidates = assets.iter().filter(|asset| !is_auxiliary_asset(asset));
 
     if let Some(filter) = asset_filter {
         let matches = candidates
-            .into_iter()
             .filter(|asset| asset.contains(filter))
             .collect::<Vec<_>>();
         return match matches.as_slice() {
@@ -193,36 +189,35 @@ fn select_asset(assets: &[String], asset_filter: Option<&str>) -> Result<String>
         };
     }
 
-    let scored = candidates
-        .into_iter()
-        .map(|asset| (asset_score(asset), asset))
-        .filter(|(score, _)| *score > 0)
-        .sorted_by(|(left_score, left), (right_score, right)| {
-            right_score.cmp(left_score).then_with(|| left.cmp(right))
-        })
-        .collect::<Vec<_>>();
-
-    let Some((best_score, best_asset)) = scored.first() else {
-        bail!(
-            "could not infer a release asset for this platform; choose one with --asset. Available assets:\n{}",
-            format_asset_list(assets)
-        );
-    };
-
-    let tied = scored
-        .iter()
-        .filter(|(score, _)| score == best_score)
-        .collect::<Vec<_>>();
-    if tied.len() > 1 {
-        bail!(
-            "multiple release assets look equally good for this platform:\n{}\nChoose one with --asset.",
-            tied.into_iter()
-                .map(|(_, asset)| format!("  - {asset}"))
-                .join("\n")
-        );
+    // Keep only the highest-scoring candidates instead of sorting every asset.
+    let mut best_score = 0;
+    let mut best_assets = Vec::new();
+    for asset in candidates {
+        let score = asset_score(asset);
+        if score > best_score {
+            best_score = score;
+            best_assets.clear();
+            best_assets.push(asset);
+        } else if score == best_score && score > 0 {
+            best_assets.push(asset);
+        }
     }
 
-    Ok((*best_asset).to_string())
+    match best_assets.as_slice() {
+        [asset] => Ok((*asset).to_string()),
+        [] => bail!(
+            "could not infer a release asset for this platform; choose one with --asset. Available assets:\n{}",
+            format_asset_list(assets)
+        ),
+        _ => {
+            // Preserve alphabetical order in the ambiguity message.
+            best_assets.sort_unstable();
+            bail!(
+                "multiple release assets look equally good for this platform:\n{}\nChoose one with --asset.",
+                best_assets.into_iter().map(|asset| format!("  - {asset}")).join("\n")
+            );
+        }
+    }
 }
 
 fn asset_score(asset: &str) -> i32 {
@@ -506,6 +501,88 @@ mod tests {
             .to_string();
 
         assert!(err.contains("matched multiple assets"));
+    }
+
+    #[test]
+    fn asset_inference_selects_the_unique_best_in_any_order() -> Result<()> {
+        let expected = format!(
+            "tool-{}-{}.tar.gz",
+            std::env::consts::ARCH,
+            std::env::consts::OS
+        );
+        let assets = [
+            expected.clone(),
+            "zeta.zip".to_string(),
+            "alpha.zip".to_string(),
+            "checksums.txt".to_string(),
+            "plain-file".to_string(),
+        ];
+
+        for permutation in assets.iter().cloned().permutations(assets.len()) {
+            assert_eq!(select_asset(&permutation, None)?, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn asset_inference_reports_only_the_best_ties_in_alphabetical_order() {
+        let platform = format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS);
+        let alpha = format!("alpha-{platform}.zip");
+        let zeta = format!("zeta-{platform}.zip");
+        let assets = [
+            "lower-score.zip".to_string(),
+            zeta.clone(),
+            format!("checksums-{platform}.zip"),
+            alpha.clone(),
+        ];
+        let expected = format!(
+            "multiple release assets look equally good for this platform:\n  - {alpha}\n  - {zeta}\nChoose one with --asset."
+        );
+
+        for permutation in assets.iter().cloned().permutations(assets.len()) {
+            assert_eq!(
+                select_asset(&permutation, None).unwrap_err().to_string(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn asset_inference_rejects_empty_and_non_positive_candidates() {
+        for assets in [
+            vec![],
+            vec!["plain-file".to_string(), "checksums.txt".to_string()],
+        ] {
+            assert_eq!(
+                select_asset(&assets, None).unwrap_err().to_string(),
+                format!(
+                    "could not infer a release asset for this platform; choose one with --asset. Available assets:\n{}",
+                    format_asset_list(&assets)
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn asset_filter_selects_a_unique_match_without_platform_scoring() -> Result<()> {
+        let assets = vec!["plain-file".to_string(), "plain-file.sig".to_string()];
+
+        assert_eq!(select_asset(&assets, Some("plain"))?, "plain-file");
+        Ok(())
+    }
+
+    #[test]
+    fn asset_filter_reports_no_match_and_keeps_ambiguous_matches_in_input_order() {
+        let assets = vec!["zeta.zip".to_string(), "alpha.zip".to_string()];
+
+        assert_eq!(
+            select_asset(&assets, Some("missing")).unwrap_err().to_string(),
+            "no release asset matched --asset \"missing\"; available assets:\n  - zeta.zip\n  - alpha.zip"
+        );
+        assert_eq!(
+            select_asset(&assets, Some("zip")).unwrap_err().to_string(),
+            "--asset \"zip\" matched multiple assets:\n  - zeta.zip\n  - alpha.zip\nUse a more specific --asset value."
+        );
     }
 
     #[test]
