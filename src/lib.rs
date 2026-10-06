@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use itertools::Itertools;
 use log::*;
 use scraper::{Html, Selector};
@@ -14,7 +14,6 @@ use url::Url;
 
 pub mod add;
 mod archive;
-mod btlog;
 mod gzfile;
 pub mod reporter;
 mod tarfile;
@@ -23,7 +22,6 @@ mod tarxzfile;
 mod testutil;
 mod zipfile;
 
-use crate::btlog::log_error_with_stack_trace;
 use crate::reporter::{OutputRecord, Reporter};
 
 /// Shared, per-run state passed into every parallel `run_section` call.
@@ -281,8 +279,8 @@ struct SectionInputs<'a> {
 }
 
 /// Process one section. Always emits exactly one CSV row on
-/// `ctx.reporter`, even on error (stderr still carries the stack
-/// trace). Returns `Ok(())` unconditionally so one failing section
+/// `ctx.reporter`, even on error (stderr still carries the error,
+/// prefixed with the section name). Returns `Ok(())` unconditionally so one failing section
 /// doesn't poison the `rayon` iterator.
 pub fn run_section(
     section: &str,
@@ -314,7 +312,8 @@ pub fn run_section(
             outcome.current_version().map(String::from),
         ),
         Err(e) => {
-            log_error_with_stack_trace(format!("{}", e));
+            // `{:#}` prints the full anyhow context chain on one line.
+            error!("[{section}] {e:#}");
             (false, None)
         }
     };
@@ -656,10 +655,13 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Outcom
 
     let resp = http_agent().get(download_url)
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
-            .call()?;
+            .call()
+            .with_context(|| format!("downloading {download_url}"))?;
     let mut reader = resp.into_body().into_reader();
     let mut buf: Vec<u8> = Vec::new();
-    reader.read_to_end(&mut buf)?;
+    reader
+        .read_to_end(&mut buf)
+        .with_context(|| format!("reading download from {download_url}"))?;
 
     let extracted: Vec<PathBuf> = if ext == ".tar.xz" {
         tarxzfile::extract_target_from_tarxz(&mut buf, conf, output_dir)
@@ -731,11 +733,22 @@ fn set_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Collapse whitespace and cap the length, so a multi-line HTTP error
+/// body fits on one log line.
+fn one_line(body: &str) -> String {
+    const MAX_CHARS: usize = 200;
+    let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    match collapsed.char_indices().nth(MAX_CHARS) {
+        Some((i, _)) => format!("{}...", &collapsed[..i]),
+        None => collapsed,
+    }
+}
+
 fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
     let mut attempts_remaining = 10;
     let resp = loop {
         if attempts_remaining == 0 {
-            return Err(anyhow!(format!("Failed to download {}", section)));
+            return Err(anyhow!("fetching {url}: gave up after 10 attempts"));
         } else {
             attempts_remaining -= 1;
         }
@@ -755,11 +768,7 @@ fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
 
         let response = match resp {
             Ok(response) => response,
-            Err(_) => {
-                /* some kind of io/transport error */
-                let msg = format!("Unexpected error fetching {url}.");
-                return Err(anyhow!(msg));
-            }
+            Err(e) => return Err(anyhow!("fetching {url}: {e}")),
         };
 
         let status_code = response.status().as_u16();
@@ -778,11 +787,10 @@ fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
             }
             _ => {
                 let body = response.into_body().read_to_string()?;
-                let msg = format!(
-                    "Unexpected error fetching {url}. Status {status_code}. \
-                    Body: {body}"
-                );
-                return Err(anyhow!(msg));
+                return Err(anyhow!(
+                    "fetching {url}: status {status_code}: {}",
+                    one_line(&body)
+                ));
             }
         };
     };
@@ -851,14 +859,15 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
     let mut attempts_remaining = 10;
     let resp = loop {
         if attempts_remaining == 0 {
-            return Err(anyhow!(format!("Failed to download {}", section)));
+            return Err(anyhow!("fetching {url}: gave up after 10 attempts"));
         } else {
             attempts_remaining -= 1;
         }
 
         let resp = http_agent().get(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
-                .call()?;
+                .call()
+                .with_context(|| format!("fetching {url}"))?;
         let status_code = resp.status().as_u16();
 
         debug!("Fetching {section}, status: {status_code}");
@@ -873,11 +882,10 @@ fn parse_html_page(section: &str, conf: &Config, url: &str) -> Result<Option<Hit
             }
             _ => {
                 let body = resp.into_body().read_to_string()?;
-                let msg = format!(
-                    "Unexpected error fetching {url}. Status {status_code}. \
-                    Body: {body}"
-                );
-                return Err(anyhow!(msg));
+                return Err(anyhow!(
+                    "fetching {url}: status {status_code}: {}",
+                    one_line(&body)
+                ));
             }
         };
     };
