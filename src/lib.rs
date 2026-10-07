@@ -737,11 +737,33 @@ fn set_executable(_path: &Path) -> Result<()> {
 /// body fits on one log line.
 fn one_line(body: &str) -> String {
     const MAX_CHARS: usize = 200;
-    let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    match collapsed.char_indices().nth(MAX_CHARS) {
-        Some((i, _)) => format!("{}...", &collapsed[..i]),
-        None => collapsed,
+    let mut collapsed = String::new();
+    let mut char_count = 0;
+    let mut pending_space = false;
+
+    for c in body.chars() {
+        if c.is_whitespace() {
+            pending_space = !collapsed.is_empty();
+            continue;
+        }
+        // Delay spaces until the next word, so trailing whitespace is omitted.
+        if pending_space {
+            if char_count == MAX_CHARS {
+                collapsed.push_str("...");
+                return collapsed;
+            }
+            collapsed.push(' ');
+            char_count += 1;
+            pending_space = false;
+        }
+        if char_count == MAX_CHARS {
+            collapsed.push_str("...");
+            return collapsed;
+        }
+        collapsed.push(c);
+        char_count += 1;
     }
+    collapsed
 }
 
 fn parse_json(section: &str, conf: &Config, url: &str) -> Result<Option<Hit>> {
@@ -1312,6 +1334,61 @@ mod tests {
         };
         assert_eq!(out, Some(expected_hit));
         Ok(())
+    }
+
+    #[test]
+    fn one_line_collapses_whitespace() {
+        for (body, expected) in [
+            ("", ""),
+            (" \t\r\n\u{2003}", ""),
+            (" \tpermission\r\n denied  \n", "permission denied"),
+            ("\u{2003}échec\u{00a0}🙂\u{2028}", "échec 🙂"),
+        ] {
+            assert_eq!(one_line(body), expected);
+        }
+    }
+
+    #[test]
+    fn one_line_preserves_exact_character_limit() {
+        for character in ['a', 'é', '🙂'] {
+            for length in [199, 200, 201] {
+                let body = character.to_string().repeat(length);
+                let expected = if length > 200 {
+                    format!("{}...", character.to_string().repeat(200))
+                } else {
+                    body.clone()
+                };
+                assert_eq!(one_line(&body), expected);
+                assert_eq!(one_line(&format!(" \t{body}\r\n")), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn one_line_counts_collapsed_spaces_at_the_limit() {
+        for length in [198, 199, 200] {
+            let prefix = "a".repeat(length);
+            let body = format!("{prefix}\r\n\t b");
+            let collapsed = format!("{prefix} b");
+            let expected = if collapsed.len() > 200 {
+                format!("{}...", &collapsed[..200])
+            } else {
+                collapsed
+            };
+            assert_eq!(one_line(&body), expected);
+        }
+    }
+
+    #[test]
+    fn one_line_truncates_large_bodies() {
+        assert_eq!(
+            one_line(&"a".repeat(1_000_000)),
+            format!("{}...", "a".repeat(200))
+        );
+        assert_eq!(
+            one_line(&"error\n\t".repeat(100_000)),
+            format!("{}er...", "error ".repeat(33))
+        );
     }
 
     fn json_download_conf() -> Config {
