@@ -170,10 +170,10 @@ fn section_name_for_repo(repo: &str, override_name: Option<&str>) -> String {
 }
 
 fn select_asset(assets: &[String], asset_filter: Option<&str>) -> Result<String> {
-    let candidates = assets.iter().filter(|asset| !is_auxiliary_asset(asset));
-
     if let Some(filter) = asset_filter {
-        let matches = candidates
+        let matches = assets
+            .iter()
+            .filter(|asset| !is_auxiliary_asset(&asset.to_lowercase()))
             .filter(|asset| asset.contains(filter))
             .collect::<Vec<_>>();
         return match matches.as_slice() {
@@ -192,7 +192,8 @@ fn select_asset(assets: &[String], asset_filter: Option<&str>) -> Result<String>
     // Keep only the highest-scoring candidates instead of sorting every asset.
     let mut best_score = 0;
     let mut best_assets = Vec::new();
-    for asset in candidates {
+    for asset in assets {
+        // Scoring normalizes the name and rejects auxiliary files in one pass.
         let score = asset_score(asset);
         if score > best_score {
             best_score = score;
@@ -227,12 +228,12 @@ fn asset_score(asset: &str) -> i32 {
     }
 
     let mut score = 0;
-    let arch_aliases = match std::env::consts::ARCH {
-        "x86_64" => vec!["x86_64", "amd64", "x64"],
-        "aarch64" => vec!["aarch64", "arm64"],
-        "arm" => vec!["armv7", "arm-", "arm_"],
-        "x86" => vec!["i686", "i386", "x86"],
-        other => vec![other],
+    let arch_aliases: &[&str] = match std::env::consts::ARCH {
+        "x86_64" => &["x86_64", "amd64", "x64"],
+        "aarch64" => &["aarch64", "arm64"],
+        "arm" => &["armv7", "arm-", "arm_"],
+        "x86" => &["i686", "i386", "x86"],
+        other => &[other],
     };
     if arch_aliases.iter().any(|alias| lower.contains(alias)) {
         score += 20;
@@ -297,8 +298,8 @@ fn asset_score(asset: &str) -> i32 {
     score
 }
 
-fn is_auxiliary_asset(asset: &str) -> bool {
-    let lower = asset.to_lowercase();
+/// Check an already-lowercase asset name without allocating another copy.
+fn is_auxiliary_asset(lower: &str) -> bool {
     [
         "checksum",
         "checksums",
@@ -521,6 +522,41 @@ mod tests {
         for permutation in assets.iter().cloned().permutations(assets.len()) {
             assert_eq!(select_asset(&permutation, None)?, expected);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn asset_selection_preserves_case_and_rejects_uppercase_auxiliary_markers() -> Result<()> {
+        let expected = format!(
+            "Tool-{}-{}.ZIP",
+            std::env::consts::ARCH.to_uppercase(),
+            std::env::consts::OS.to_uppercase()
+        );
+        let mut assets = vec!["fallback.zip".to_string(), expected.clone()];
+        for marker in [
+            "CHECKSUM",
+            "CHECKSUMS",
+            "SHA256",
+            "SHA512",
+            ".SIG",
+            ".ASC",
+            ".PEM",
+            ".TXT",
+            ".JSON",
+            ".SPDX",
+            "SBOM",
+        ] {
+            let auxiliary = format!("{expected}-{marker}.ZIP");
+            // Auxiliary files must not win inference, even without a binary.
+            assert!(select_asset(std::slice::from_ref(&auxiliary), None).is_err());
+            assert!(select_asset(std::slice::from_ref(&auxiliary), Some("Tool")).is_err());
+            assets.push(auxiliary);
+        }
+
+        assert_eq!(select_asset(&assets, None)?, expected);
+        assert_eq!(select_asset(&assets, Some("Tool"))?, expected);
+        // Explicit filters remain case-sensitive against the original name.
+        assert!(select_asset(&assets, Some("tool")).is_err());
         Ok(())
     }
 
