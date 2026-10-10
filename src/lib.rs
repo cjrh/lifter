@@ -657,6 +657,14 @@ fn process(section: &str, conf: &mut Config, output_dir: &Path) -> Result<Outcom
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36")
             .call()
             .with_context(|| format!("downloading {download_url}"))?;
+    // The shared agent leaves HTTP error statuses to the caller. Never pass an
+    // error page to an extractor or save it over an existing executable.
+    if !resp.status().is_success() {
+        return Err(anyhow!(
+            "downloading {download_url}: status {}",
+            resp.status().as_u16()
+        ));
+    }
     let mut reader = resp.into_body().into_reader();
     let mut buf: Vec<u8> = Vec::new();
     reader
@@ -992,6 +1000,97 @@ fn slice_from_end(s: &str, n: usize) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exercise discovery and download together without contacting a real host.
+    fn process_mock_download(status: u16) -> (Result<Outcome>, tempfile::TempDir, String) {
+        use std::io::{BufRead, BufReader};
+        use std::net::TcpListener;
+        use std::time::Instant;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let page = r#"<span id="version">2</span><a href="/tool.exe">tool</a>"#;
+            for (status, body) in [(200, page), (status, "download body")] {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "request did not arrive");
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(e) => panic!("accepting request: {e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut stream);
+                loop {
+                    let mut line = String::new();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tool.exe"), b"existing binary").unwrap();
+        let mut conf = crate::testutil::make_conf_from_ini(
+            "tool.exe",
+            &[("target_filename_to_extract_from_archive", "tool.exe")],
+        );
+        conf.page_url = format!("{base_url}/release");
+        conf.anchor_tag = "a".to_string();
+        conf.anchor_text = "tool".to_string();
+        conf.version_tag = Some("#version".to_string());
+        conf.version = Some("1".to_string());
+
+        let result = process("tool.exe", &mut conf, dir.path());
+        server.join().unwrap();
+        (result, dir, format!("{base_url}/tool.exe"))
+    }
+
+    #[test]
+    fn failed_download_preserves_existing_binary() {
+        for status in [403, 404, 429, 500] {
+            let (result, dir, download_url) = process_mock_download(status);
+            let error = result.err().expect("HTTP error must not be an update");
+            assert_eq!(
+                error.to_string(),
+                format!("downloading {download_url}: status {status}")
+            );
+            assert_eq!(
+                std::fs::read(dir.path().join("tool.exe")).unwrap(),
+                b"existing binary"
+            );
+            assert!(!dir.path().join("tool.exe.tmp").exists());
+        }
+    }
+
+    #[test]
+    fn successful_download_replaces_existing_binary() {
+        let (result, dir, _) = process_mock_download(200);
+        assert!(matches!(result.unwrap(), Outcome::Updated { version, .. } if version == "2"));
+        assert_eq!(
+            std::fs::read(dir.path().join("tool.exe")).unwrap(),
+            b"download body"
+        );
+        assert!(!dir.path().join("tool.exe.tmp").exists());
+    }
 
     #[test]
     fn test_extract_data_from_json() -> Result<()> {
