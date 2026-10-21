@@ -31,10 +31,10 @@ pub fn extract_target_from_zipfile(
         if all_fulfilled(&state) {
             break;
         }
-        let Some(fname) = archive.name_for_index(index) else {
+        let Some(Ok(fname)) = archive.name_for_index(index) else {
             continue;
         };
-        let entry_path = Path::new(fname);
+        let entry_path = Path::new(fname.as_ref());
         let Some(basename) = entry_path.file_name().and_then(|p| p.to_str()) else {
             continue;
         };
