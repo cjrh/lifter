@@ -482,7 +482,7 @@ fn build_extraction_targets(
         let mut targets = Vec::with_capacity(names.len());
         for item in &names {
             let pattern_str = strfmt(item, tmp)?;
-            let pattern = regex::Regex::new(&format!("^{}$", &pattern_str))?;
+            let pattern = regex::Regex::new(&format!("^(?:{pattern_str})$"))?;
             targets.push(ExtractionTarget {
                 pattern_str,
                 pattern,
@@ -501,7 +501,7 @@ fn build_extraction_targets(
         } else {
             Some(pattern_str.clone())
         };
-        let pattern = regex::Regex::new(&format!("^{}$", &pattern_str))?;
+        let pattern = regex::Regex::new(&format!("^(?:{pattern_str})$"))?;
         Ok(vec![ExtractionTarget {
             pattern_str,
             pattern,
@@ -1629,6 +1629,63 @@ mod tests {
         let names: Vec<&str> = targets.iter().map(|t| t.pattern_str.as_str()).collect();
         assert_eq!(names, vec!["rg", "doc/rg.1", "complete/rg.bash"]);
         assert!(targets.iter().all(|t| t.rename_to.is_none()));
+    }
+
+    #[test]
+    fn extraction_target_alternatives_match_only_whole_filenames() {
+        for tmp in [
+            ini_map([("target_filename_to_extract_from_archive", "foo|bar")]),
+            ini_map([("target_filenames_to_extract_from_archive", r#"["foo|bar"]"#)]),
+        ] {
+            let targets = build_extraction_targets("tool", &tmp).unwrap();
+            let pattern = &targets[0].pattern;
+            for name in ["foo", "bar"] {
+                assert!(pattern.is_match(name), "should match {name}");
+            }
+            for name in ["foo-backup", "not-bar", "not-foo", "bar-backup"] {
+                assert!(!pattern.is_match(name), "must not match {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn archive_extraction_skips_partial_alternative_matches() {
+        for tmp in [
+            ini_map([
+                ("target_filename_to_extract_from_archive", "foo|bar"),
+                ("desired_filename", "tool"),
+            ]),
+            ini_map([("target_filenames_to_extract_from_archive", r#"["foo|bar"]"#)]),
+        ] {
+            let mut conf = Config::new();
+            conf.extraction_targets = build_extraction_targets("tool", &tmp).unwrap();
+            let entries: &[(&str, &[u8])] = &[
+                ("foo-backup", b"wrong prefix match"),
+                ("not-bar", b"wrong suffix match"),
+                ("bin/bar", b"correct binary"),
+            ];
+            let tar_dir = tempfile::tempdir().unwrap();
+            let zip_dir = tempfile::tempdir().unwrap();
+            let mut archive = tar::Archive::new(std::io::Cursor::new(build_test_tar(entries)));
+            let tar_written =
+                archive::extract_targets_from_tar(&mut archive, &conf, tar_dir.path());
+            let zip_written = zipfile::extract_target_from_zipfile(
+                &mut build_test_zip(entries),
+                &conf,
+                zip_dir.path(),
+            )
+            .unwrap();
+            let name = conf.extraction_targets[0]
+                .rename_to
+                .as_deref()
+                .unwrap_or("bar");
+            for (written, dir) in [(tar_written, tar_dir), (zip_written, zip_dir)] {
+                assert_eq!(written, vec![dir.path().join(name)]);
+                assert_eq!(std::fs::read(&written[0]).unwrap(), b"correct binary");
+                assert!(!dir.path().join("foo-backup").exists());
+                assert!(!dir.path().join("not-bar").exists());
+            }
+        }
     }
 
     #[test]
