@@ -86,6 +86,11 @@ pub(crate) fn extract_targets_from_tar<R: std::io::Read>(
                 continue;
             }
         };
+        // Only regular files can fulfill binary targets. A directory or link
+        // with the same basename must not hide a later matching file.
+        if !file.header().entry_type().is_file() {
+            continue;
+        }
         // Resolve GNU/PAX paths and borrow the basename instead of copying it.
         let path = match file.path() {
             Ok(p) => p,
@@ -123,6 +128,49 @@ mod tests {
     use super::extract_targets_from_tar;
     use crate::testutil::make_conf_from_ini;
     use std::io::Cursor;
+
+    #[test]
+    fn skips_non_regular_entries_before_a_matching_file() {
+        for entry_type in [
+            tar::EntryType::Directory,
+            tar::EntryType::Symlink,
+            tar::EntryType::Link,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut builder = tar::Builder::new(Vec::new());
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(entry_type);
+            header.set_size(0);
+            header.set_mode(0o755);
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                std::fs::write(dir.path().join("link-target"), b"not the binary").unwrap();
+                header.set_link_name("link-target").unwrap();
+            }
+            builder
+                .append_data(&mut header, "first/tool", std::io::empty())
+                .unwrap();
+            let mut header = tar::Header::new_gnu();
+            header.set_size(6);
+            header.set_mode(0o755);
+            builder
+                .append_data(&mut header, "second/tool", &b"binary"[..])
+                .unwrap();
+            let conf = make_conf_from_ini(
+                "tool",
+                &[("target_filename_to_extract_from_archive", "tool")],
+            );
+            let mut archive = tar::Archive::new(Cursor::new(builder.into_inner().unwrap()));
+
+            let written = extract_targets_from_tar(&mut archive, &conf, dir.path());
+
+            assert_eq!(written, vec![dir.path().join("tool")], "{entry_type:?}");
+            assert_eq!(std::fs::read(&written[0]).unwrap(), b"binary");
+            assert!(std::fs::symlink_metadata(&written[0])
+                .unwrap()
+                .file_type()
+                .is_file());
+        }
+    }
 
     #[test]
     fn extracts_gnu_long_path_and_renames_it() {
