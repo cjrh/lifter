@@ -47,6 +47,11 @@ pub fn extract_target_from_zipfile(
         let out_path = output_dir.join(out_name);
         debug!("zip, Got a match: {} -> {}", fname, out_path.display());
         let mut entry = archive.by_index(index)?;
+        // A directory with a matching basename must not overwrite a binary
+        // or fulfill its target before a later regular file can be extracted.
+        if entry.is_dir() {
+            continue;
+        }
         payload.clear();
         entry.read_to_end(&mut payload)?;
         std::fs::File::create(&out_path)?.write_all(&payload)?;
@@ -86,6 +91,41 @@ mod tests {
             b"first binary"
         );
         assert!(!dir.path().join("tool").exists());
+    }
+
+    #[test]
+    fn skips_matching_directories_without_overwriting_existing_files() {
+        for include_file in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let dest = dir.path().join("renamed-tool");
+            std::fs::write(&dest, b"installed binary").unwrap();
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let opts = zip::write::SimpleFileOptions::default();
+            writer.add_directory("first/tool/", opts).unwrap();
+            if include_file {
+                use std::io::Write;
+                writer.start_file("second/tool", opts).unwrap();
+                writer.write_all(b"new binary").unwrap();
+            }
+            let mut zip_bytes = writer.finish().unwrap().into_inner();
+            let conf = make_conf_from_ini(
+                "tool",
+                &[
+                    ("target_filename_to_extract_from_archive", "tool"),
+                    ("desired_filename", "renamed-tool"),
+                ],
+            );
+
+            let written = extract_target_from_zipfile(&mut zip_bytes, &conf, dir.path()).unwrap();
+
+            if include_file {
+                assert_eq!(written, vec![dest.clone()]);
+                assert_eq!(std::fs::read(&dest).unwrap(), b"new binary");
+            } else {
+                assert!(written.is_empty());
+                assert_eq!(std::fs::read(&dest).unwrap(), b"installed binary");
+            }
+        }
     }
 
     #[test]
