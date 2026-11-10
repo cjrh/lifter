@@ -66,6 +66,9 @@ pub(crate) fn extract_targets_from_tar<R: std::io::Read>(
 ) -> Vec<PathBuf> {
     let mut state = init_target_states(conf);
     let mut written: Vec<PathBuf> = Vec::new();
+    if state.is_empty() {
+        return written;
+    }
 
     let entries = match archive.entries() {
         Ok(e) => e,
@@ -76,9 +79,6 @@ pub(crate) fn extract_targets_from_tar<R: std::io::Read>(
     };
 
     for file in entries {
-        if all_fulfilled(&state) {
-            break;
-        }
         let mut file = match file {
             Ok(f) => f,
             Err(e) => {
@@ -117,6 +117,11 @@ pub(crate) fn extract_targets_from_tar<R: std::io::Read>(
         }
         slot.fulfilled = true;
         written.push(out_path);
+        // Stop before advancing the streaming iterator: even reading the next
+        // header can require more decompression.
+        if all_fulfilled(&state) {
+            break;
+        }
     }
 
     warn_unfulfilled(&state);
@@ -128,6 +133,45 @@ mod tests {
     use super::extract_targets_from_tar;
     use crate::testutil::make_conf_from_ini;
     use std::io::Cursor;
+
+    #[test]
+    fn stops_reading_after_the_last_requested_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut builder = tar::Builder::new(Vec::new());
+        for name in ["tool", "unwanted"] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(6);
+            header.set_mode(0o755);
+            builder
+                .append_data(&mut header, name, &b"binary"[..])
+                .unwrap();
+        }
+        let conf = make_conf_from_ini(
+            "tool",
+            &[("target_filename_to_extract_from_archive", "tool")],
+        );
+        let mut archive = tar::Archive::new(Cursor::new(builder.into_inner().unwrap()));
+
+        let written = extract_targets_from_tar(&mut archive, &conf, dir.path());
+
+        assert_eq!(written, vec![dir.path().join("tool")]);
+        assert_eq!(std::fs::read(&written[0]).unwrap(), b"binary");
+        // The first entry occupies one 512-byte header and one data block.
+        // Reading the unwanted entry's header would advance beyond this point.
+        assert!(archive.into_inner().position() <= 1024);
+        assert!(!dir.path().join("unwanted").exists());
+    }
+
+    #[test]
+    fn empty_targets_do_not_read_the_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut archive = tar::Archive::new(Cursor::new(b"not a tar archive"));
+
+        let written = extract_targets_from_tar(&mut archive, &crate::Config::new(), dir.path());
+
+        assert!(written.is_empty());
+        assert_eq!(archive.into_inner().position(), 0);
+    }
 
     #[test]
     fn skips_non_regular_entries_before_a_matching_file() {
